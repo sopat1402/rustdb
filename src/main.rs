@@ -1,37 +1,76 @@
 mod page;
 mod slotted_page;
+mod buffer_pool;
+
 use std::fs::File;
-use std::io::Seek;
-use std::process;
-use std::io::SeekFrom;
-use page::DatabaseFile;
-use page::{PageHeader, PageType, PAGE_SIZE};
+
+use page::{DatabaseFile, PAGE_SIZE, PageHeader, PageType};
 use slotted_page::{Page, RECORD_SIZE, RecordError};
 
 fn main() {
-    println!("=== PAGE TEST ===");
+    println!("=== PERSISTENCE TEST ===");
 
     // ------------------------------------------------------------
-    // 1. Create a fresh page
+    // 1. Start with a completely fresh database
     // ------------------------------------------------------------
 
-    let header = PageHeader::new(0, PageType::Data);
+    let _ = std::fs::remove_file("database.db");
+
+    let file = match File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("database.db")
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("failed to create database: {e}");
+            return;
+        }
+    };
+
+    let mut db = DatabaseFile {
+        file,
+        size: 0,
+    };
+
+    println!("Created database");
+
+
+    // ------------------------------------------------------------
+    // 2. Allocate page 0
+    // ------------------------------------------------------------
+
+    let page_id = match db.allocate_page() {
+        Ok(id) => {
+            println!("Allocated page {id}");
+            id
+        }
+
+        Err(e) => {
+            eprintln!("failed to allocate page: {e}");
+            return;
+        }
+    };
+
+
+    // ------------------------------------------------------------
+    // 3. Create a Page in memory
+    // ------------------------------------------------------------
+
+    let header = PageHeader::new(page_id, PageType::Data);
     let buffer = [0u8; PAGE_SIZE];
 
     let mut page = Page::new(header, buffer);
 
-    println!("Created page {}", page.header.page_id);
+    println!("Created page in memory");
 
 
     // ------------------------------------------------------------
-    // 2. Write record #1
-    //
-    // First 2 bytes = record ID
-    // Remaining bytes = actual record data
+    // 4. Write records into the page
     // ------------------------------------------------------------
 
     let mut record1 = [0u8; RECORD_SIZE];
-
     record1[0..2].copy_from_slice(&1u16.to_le_bytes());
     record1[2..7].copy_from_slice(b"hello");
 
@@ -44,12 +83,7 @@ fn main() {
     }
 
 
-    // ------------------------------------------------------------
-    // 3. Write record #2
-    // ------------------------------------------------------------
-
     let mut record2 = [0u8; RECORD_SIZE];
-
     record2[0..2].copy_from_slice(&2u16.to_le_bytes());
     record2[2..7].copy_from_slice(b"world");
 
@@ -63,7 +97,59 @@ fn main() {
 
 
     // ------------------------------------------------------------
-    // 4. Read record #1
+    // 5. Serialize the modified header into the page buffer
+    // ------------------------------------------------------------
+
+    page.header.serialise(&mut page.buffer);
+
+    println!("Serialized page");
+
+
+    // ------------------------------------------------------------
+    // 6. Write the entire page to disk
+    // ------------------------------------------------------------
+
+    match db.write_page(page_id, &page.buffer) {
+        Ok(()) => println!("write page 0 to disk: OK"),
+        Err(e) => {
+            eprintln!("write page failed: {e}");
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 7. DESTROY THE IN-MEMORY PAGE
+    //
+    // This is important.
+    //
+    // Everything we're about to read must come from database.db.
+    // ------------------------------------------------------------
+
+    drop(page);
+
+    println!("Dropped in-memory page");
+
+
+    // ------------------------------------------------------------
+    // 8. Load the page back from disk
+    // ------------------------------------------------------------
+
+    let mut page = match Page::load(page_id as u16, &db) {
+        Ok(p) => {
+            println!("Loaded page 0 from disk: OK");
+            p
+        }
+
+        Err(e) => {
+            eprintln!("failed to load page: {:?}", e);
+            return;
+        }
+    };
+
+
+    // ------------------------------------------------------------
+    // 9. Verify record 1 survived persistence
     // ------------------------------------------------------------
 
     let mut read_buffer = [0u8; RECORD_SIZE];
@@ -71,20 +157,25 @@ fn main() {
     match page.read_record(1, &mut read_buffer) {
         Ok(size) => {
             println!(
-                "read record 1: OK ({size} bytes): {:?}",
+                "read persisted record 1: OK ({size} bytes): {:?}",
                 &read_buffer[2..size]
             );
+
+            if &read_buffer[2..size] != b"hello" {
+                eprintln!("ERROR: record 1 contents are wrong");
+                return;
+            }
         }
 
         Err(e) => {
-            eprintln!("read record 1 failed: {:?}", e);
+            eprintln!("failed to read persisted record 1: {:?}", e);
             return;
         }
     }
 
 
     // ------------------------------------------------------------
-    // 5. Read record #2
+    // 10. Verify record 2 survived persistence
     // ------------------------------------------------------------
 
     read_buffer = [0u8; RECORD_SIZE];
@@ -92,166 +183,145 @@ fn main() {
     match page.read_record(2, &mut read_buffer) {
         Ok(size) => {
             println!(
-                "read record 2: OK ({size} bytes): {:?}",
+                "read persisted record 2: OK ({size} bytes): {:?}",
                 &read_buffer[2..size]
             );
+
+            if &read_buffer[2..size] != b"world" {
+                eprintln!("ERROR: record 2 contents are wrong");
+                return;
+            }
         }
 
         Err(e) => {
-            eprintln!("read record 2 failed: {:?}", e);
+            eprintln!("failed to read persisted record 2: {:?}", e);
             return;
         }
     }
 
 
     // ------------------------------------------------------------
-    // 6. Try reading nonexistent record
-    // ------------------------------------------------------------
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(999, &mut read_buffer) {
-        Ok(_) => {
-            eprintln!("ERROR: nonexistent record was found");
-            return;
-        }
-
-        Err(RecordError::RecordAbsent) => {
-            println!("read nonexistent record: correctly returned RecordAbsent");
-        }
-
-        Err(e) => {
-            eprintln!(
-                "read nonexistent record: wrong error {:?}",
-                e
-            );
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 7. Update record #1
+    // 11. Modify the page
     // ------------------------------------------------------------
 
     let mut updated = [0u8; RECORD_SIZE];
-
     updated[0..2].copy_from_slice(&1u16.to_le_bytes());
     updated[2..9].copy_from_slice(b"updated");
 
     match page.update_record(1, &updated, 9) {
         Ok(size) => println!("update record 1: OK ({size} bytes)"),
         Err(e) => {
-            eprintln!("update record 1 failed: {:?}", e);
+            eprintln!("update failed: {:?}", e);
             return;
         }
     }
 
 
     // ------------------------------------------------------------
-    // 8. Read updated record
-    // ------------------------------------------------------------
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(1, &mut read_buffer) {
-        Ok(size) => {
-            println!(
-                "read updated record 1: OK ({size} bytes): {:?}",
-                &read_buffer[2..size]
-            );
-        }
-
-        Err(e) => {
-            eprintln!("read updated record failed: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 9. Delete record #2
+    // 12. Delete record 2
     // ------------------------------------------------------------
 
     match page.delete_record(2) {
         Ok(()) => println!("delete record 2: OK"),
         Err(e) => {
-            eprintln!("delete record 2 failed: {:?}", e);
+            eprintln!("delete failed: {:?}", e);
             return;
         }
     }
 
 
     // ------------------------------------------------------------
-    // 10. Verify deleted record cannot be read
+    // 13. Persist modified page
     // ------------------------------------------------------------
 
-    read_buffer = [0u8; RECORD_SIZE];
+    page.header.serialise(&mut page.buffer);
+
+    match db.write_page(page_id, &page.buffer) {
+        Ok(()) => println!("write modified page to disk: OK"),
+        Err(e) => {
+            eprintln!("failed to write modified page: {e}");
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 14. Destroy it AGAIN
+    // ------------------------------------------------------------
+
+    drop(page);
+
+    println!("Dropped modified in-memory page");
+
+
+    // ------------------------------------------------------------
+    // 15. Load it AGAIN
+    // ------------------------------------------------------------
+
+    let page = match Page::load(page_id as u16, &db) {
+        Ok(p) => {
+            println!("Reloaded modified page from disk: OK");
+            p
+        }
+
+        Err(e) => {
+            eprintln!("failed to reload page: {:?}", e);
+            return;
+        }
+    };
+
+
+    // ------------------------------------------------------------
+    // 16. Verify update survived
+    // ------------------------------------------------------------
+
+    let mut read_buffer = [0u8; RECORD_SIZE];
+
+    match page.read_record(1, &mut read_buffer) {
+        Ok(size) => {
+            println!(
+                "read updated persisted record 1: OK ({size} bytes): {:?}",
+                &read_buffer[2..size]
+            );
+
+            if &read_buffer[2..size] != b"updated" {
+                eprintln!("ERROR: updated record is wrong");
+                return;
+            }
+        }
+
+        Err(e) => {
+            eprintln!("failed to read updated record: {:?}", e);
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 17. Verify deletion survived
+    // ------------------------------------------------------------
+
+    let mut read_buffer = [0u8; RECORD_SIZE];
 
     match page.read_record(2, &mut read_buffer) {
         Ok(_) => {
-            eprintln!("ERROR: deleted record can still be read");
+            eprintln!("ERROR: deleted record survived");
             return;
         }
 
         Err(RecordError::RecordAbsent) => {
-            println!("read deleted record: correctly returned RecordAbsent");
-        }
-
-        Err(e) => {
-            eprintln!(
-                "read deleted record: wrong error {:?}",
-                e
-            );
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 11. Reuse deleted slot
-    // ------------------------------------------------------------
-
-    let mut record3 = [0u8; RECORD_SIZE];
-
-    record3[0..2].copy_from_slice(&3u16.to_le_bytes());
-    record3[2..8].copy_from_slice(b"reused");
-
-    match page.write_record(3, &record3, 8) {
-        Ok(size) => {
             println!(
-                "write record 3 into deleted slot: OK ({size} bytes)"
+                "read deleted persisted record 2: correctly returned RecordAbsent"
             );
         }
 
         Err(e) => {
-            eprintln!("write record 3 failed: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 12. Verify reused record
-    // ------------------------------------------------------------
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(3, &mut read_buffer) {
-        Ok(size) => {
-            println!(
-                "read reused record 3: OK ({size} bytes): {:?}",
-                &read_buffer[2..size]
-            );
-        }
-
-        Err(e) => {
-            eprintln!("read reused record failed: {:?}", e);
+            eprintln!("wrong error for deleted record: {:?}", e);
             return;
         }
     }
 
 
     println!();
-    println!("=== PAGE TEST PASSED ===");
+    println!("=== PERSISTENCE TEST PASSED ===");
 }

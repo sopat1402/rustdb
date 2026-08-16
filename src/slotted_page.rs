@@ -98,6 +98,11 @@ impl Page{
             trash:trash,
         })
     }
+    pub fn flush(&mut self,db_file : &DatabaseFile)->Result<(),std::io::Error>{
+        self.header.serialise(&mut self.buffer);
+        db_file.write_page(self.header.page_id,&self.buffer)?;
+        Ok(())
+    }
     pub fn new(head : PageHeader,buf : [u8;PAGE_SIZE])->Self{
         let trash:Vec<u16>=Vec::new();
         Self{
