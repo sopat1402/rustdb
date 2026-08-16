@@ -10,11 +10,28 @@ pub struct CorruptedDataError;
 
 impl fmt::Display for CorruptedDataError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "corrupted data")
+        write!(f, "Corrupted data")
     }
 }
 
 impl std::error::Error for CorruptedDataError {}
+
+#[derive(Debug)]
+pub struct PageAbsent;
+
+impl fmt::Display for PageAbsent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Given page ID absent")
+    }
+}
+
+impl std::error::Error for PageAbsent {}
+
+#[derive(Debug)]
+pub enum PageError{
+    CorruptedDataError,
+    PageAbsent,
+}
 
 #[repr(u16)]
 pub enum PageType{
@@ -31,10 +48,15 @@ pub struct DatabaseFile{
 }
 
 impl DatabaseFile{
-    pub fn read_page(&self,page_id:u64,buf : &mut [u8;PAGE_SIZE])-> Result<(),std::io::Error> {
+    pub fn read_page(&self,page_id:u64,buf : &mut [u8;PAGE_SIZE])-> Result<(),PageError> {
         let offset:u64=page_id*(PAGE_SIZE as u64);
-        self.file.read_at(buf,offset)?;
-        Ok(())
+        if offset+PAGE_SIZE as u64>self.size{
+            return Err(PageError::PageAbsent);
+        }
+        match self.file.read_at(buf,offset){
+            Ok(_)=>return Ok(()),
+            Err(_)=>return Err(PageError::CorruptedDataError),
+        };
     }
     pub fn write_page(&self,page_id:u64,buf : &[u8;PAGE_SIZE])-> Result<(),std::io::Error> {
         let offset:u64=page_id*(PAGE_SIZE as u64);
@@ -68,7 +90,7 @@ pub struct PageHeader{
 }
 
 impl PageHeader {
-    fn new(page_id: u64, page_type: PageType) -> Self {
+    pub fn new(page_id: u64, page_type: PageType) -> Self {
         Self {
             magic: MAGIC,
             page_id,
