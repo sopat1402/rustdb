@@ -1,204 +1,93 @@
-use std::collections::HashMap;
-use crate::slotted_page::{Page};
-use std::vec::Vec;
-use std::fmt;
-use crate::page::CorruptedDataError;
+use crate::slotted_page::{Page,RecordError};
+use crate::page::{DatabaseFile,CorruptedDataError};
+use crate::lru_cache::{LRUCache};
 
-struct DLLNode{
-    prev : Option<usize>,
-    next : Option<usize>,
-    page : Page,
-    idx  : usize,
+pub struct BufferPool{
+    pub lru : LRUCache,
+    pub db_file : DatabaseFile,
 }
 
-struct DLL{
-    head        :   Option<usize>,
-    tail        :   Option<usize>,
-    nodes       :   Vec<DLLNode>,
-    trash       :   Vec<usize>,
-    capacity    :   usize,
-}
-
-impl DLL{
-    fn new(capacity:usize)->Self{
-        let nodes:Vec<DLLNode>=Vec::new();
-        let trash:Vec<usize>=Vec::new();
+impl BufferPool{
+    pub fn new(capacity : usize,db_file : DatabaseFile)->Self{
+        let lru=LRUCache::new(capacity);
         Self{
-            head:None,
-            tail:None,
-            nodes,
-            trash,
-            capacity,
+            lru,
+            db_file,
         }
     }
-    fn add_node(&mut self,page : Page)->Result<(),CorruptedDataError>{
-        if !self.trash.is_empty(){
-            let idx=match self.trash.pop(){
-                Some(i)=>i,
-                None=>return Err(CorruptedDataError),
-            };
-            let new_node=DLLNode::new(page,idx);
-            self.nodes[idx]=new_node;
-            match self.head{
-                Some(old_head)=>{
-                    self.nodes[old_head].prev=Some(idx);
-                    self.nodes[idx].next=Some(old_head);
-                    self.head=Some(idx);
-                }
-                None=>{
-                    self.head=Some(idx);
-                    self.tail=Some(idx);
-                }
-            };
-        }else{
-            let idx:usize=self.nodes.len();
-            let new_node=DLLNode::new(page,idx);
-            self.nodes.push(new_node);
-            match self.head{
-                Some(old_head)=>{
-                    self.nodes[old_head].prev=Some(idx);
-                    self.nodes[idx].next=Some(old_head);
-                    self.head=Some(idx);
-                }
-                None=>{
-                    self.head=Some(idx);
-                    self.tail=Some(idx);
-                }
-            }
-        }
-        self.shrink();
-        Ok(())
-    }
-    fn shrink(&mut self){
-        while self.nodes.len()-self.trash.len()>self.capacity{
-            self.pop_tail();
-        }
-    }
-    fn move_to_head(&mut self,idx:usize)->Result<(),CorruptedDataError>{
-        let head=match self.head{
-            Some(h)=>h,
-            None=>return Err(CorruptedDataError),
-        };
-        let tail=match self.tail{
-            Some(t)=>t,
-            None=>return Err(CorruptedDataError),
-        };
-        if head==tail && idx==head{
-            return Ok(());
-        }
-        else if idx==head{
-            return Ok(());
-        }
-        let prev_idx=match self.nodes[idx].prev{
-            Some(p)=>p,
-            None=>return Err(CorruptedDataError),
-        };
-        if idx==tail{
-            self.nodes[prev_idx].next=None;
-            self.tail=Some(prev_idx);
-        }
-        else{
-            let next_idx=match self.nodes[idx].next{
-                Some(n)=>n,
-                None=>return Err(CorruptedDataError),
-            };
-            self.nodes[prev_idx].next=Some(next_idx);
-            self.nodes[next_idx].prev=Some(prev_idx);
-        }
-        self.nodes[idx].prev=None;
-        self.nodes[idx].next=Some(head);
-        self.head=Some(idx);
-        Ok(())
-    }
-    fn delete_node(&mut self,idx:usize)->Result<(),CorruptedDataError>{
-        let head=match self.head{
-            Some(h)=>h,
-            None=>return Err(CorruptedDataError),
-        };
-        let tail=match self.tail{
-            Some(t)=>t,
-            None=>return Err(CorruptedDataError),
-        };
-        if idx==head{
-            if idx==tail{
-                self.head=None;
-                self.tail=None;
-                self.trash.push(idx);
-            }else{
-                let next_idx=match self.nodes[idx].next{
-                    Some(n)=>n,
-                    None=>return Err(CorruptedDataError),
+    pub fn get_page(&mut self, page_id: u64) -> Result<&Page, RecordError> {
+        let idx = match self.lru.get_index(page_id) {
+            Ok(idx) => idx,
+            Err(_) => {
+                let page = match Page::load(page_id as u16, &self.db_file) {
+                    Ok(p) => p,
+                    Err(_) => return Err(RecordError::RecordAbsent),
                 };
-                self.nodes[next_idx].prev=None;
-                self.head=Some(next_idx);
-                self.trash.push(idx);
+
+                match self.lru.set_new(page, &self.db_file) {
+                    Ok(_) => {}
+                    Err(_) => return Err(RecordError::RecordMismatch),
+                };
+
+                match self.lru.dll.head {
+                    Some(h) => h,
+                    None => return Err(RecordError::RecordMismatch),
+                }
             }
-        }
-        else if idx==tail{
-            let prev_idx=match self.nodes[idx].prev{
-                Some(p)=>p,
-                None=>return Err(CorruptedDataError),
+        };
+
+        Ok(&self.lru.dll.nodes[idx].page)
+    }
+    pub fn get_page_mut(&mut self, page_id: u64) -> Result<&mut Page, RecordError> {
+        let idx = match self.lru.get_index(page_id) {
+            Ok(idx) => idx,
+            Err(_) => {
+                let page = match Page::load(page_id as u16, &self.db_file) {
+                    Ok(p) => p,
+                    Err(_) => return Err(RecordError::RecordAbsent),
+                };
+
+                match self.lru.set_new(page, &self.db_file) {
+                    Ok(_) => {}
+                    Err(_) => return Err(RecordError::RecordMismatch),
+                };
+
+                match self.lru.dll.head {
+                    Some(h) => h,
+                    None => return Err(RecordError::RecordMismatch),
+                }
+            }
+        };
+
+        Ok(&mut self.lru.dll.nodes[idx].page)
+    }
+    pub fn flush_all(&mut self)->Result<(),CorruptedDataError>{
+        let n=self.lru.dll.nodes.len();
+        while self.lru.dll.trash.len()!=n{
+            let x=match self.lru.dll.pop_tail(&self.db_file){
+                Ok(val)=>val,
+                Err(_)=>return Err(CorruptedDataError),
             };
-            self.nodes[prev_idx].next=None;
-            self.tail=Some(prev_idx);
-            self.trash.push(idx);
-        }
-        else{
-            let next_idx=match self.nodes[idx].next{
-                Some(n)=>n,
-                None=>return Err(CorruptedDataError),
-            };
-            let prev_idx=match self.nodes[idx].prev{
-                Some(p)=>p,
-                None=>return Err(CorruptedDataError),
-            };
-            self.nodes[prev_idx].next=Some(next_idx);
-            self.nodes[next_idx].prev=Some(prev_idx);
-            self.trash.push(idx);
+            let x=self.lru.dll.nodes[x].page.header.page_id;
+            self.lru.map.remove(&x);
         }
         Ok(())
     }
-    fn pop_tail(&mut self)->Result<(),CorruptedDataError>{
-        let sentinel:usize=self.capacity+1;
-        let head=match self.head{
-            Some(h)=>h,
-            None=>sentinel,
+    pub fn allocate_page(&mut self)->Result<u64,std::io::Error>{
+        let x=self.db_file.allocate_page()?;
+        Ok(x)
+    }
+    pub fn flush_page(&mut self,page_id:u64)->Result<(),RecordError>{
+        let node=self.lru.get_mut(page_id)?;
+        match node.page.flush(&mut self.db_file){
+            Ok(_)=>{},
+            Err(_)=>return Err(RecordError::RecordMismatch),
         };
-        let tail=match self.tail{
-            Some(t)=>t,
-            None=>sentinel,
+        match self.lru.delete(page_id){
+            Ok(_)=>{},
+            Err(_)=>return Err(RecordError::RecordMismatch),
         };
-        if tail==sentinel && head==sentinel{
-            return Ok(());
-        }
-        else if (tail==sentinel && head!=sentinel)||(tail!=sentinel && head==sentinel){
-            return Err(CorruptedDataError);
-        }
-        else if tail==head{
-            self.tail=None;
-            self.head=None;
-            self.trash.push(tail);
-        }
-        else{
-            let prev_idx=match self.nodes[tail].prev{
-                Some(p)=>p,
-                None=>return Err(CorruptedDataError),
-            };
-            self.nodes[prev_idx].next=None;
-            self.tail=Some(prev_idx);
-            self.trash.push(tail);
-        }
         Ok(())
     }
 }
 
-impl DLLNode{
-    fn new(page : Page,idx:usize)->Self{
-        Self{
-            prev : None,
-            next : None,
-            page,
-            idx,
-        }
-    }
-}

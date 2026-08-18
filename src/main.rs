@@ -1,4 +1,5 @@
 mod page;
+mod lru_cache;
 mod slotted_page;
 mod buffer_pool;
 
@@ -6,13 +7,10 @@ use std::fs::File;
 
 use page::{DatabaseFile, PAGE_SIZE, PageHeader, PageType};
 use slotted_page::{Page, RECORD_SIZE, RecordError};
+use buffer_pool::BufferPool;
 
 fn main() {
-    println!("=== PERSISTENCE TEST ===");
-
-    // ------------------------------------------------------------
-    // 1. Start with a completely fresh database
-    // ------------------------------------------------------------
+    println!("=== BUFFER POOL TEST ===");
 
     let _ = std::fs::remove_file("database.db");
 
@@ -29,299 +27,290 @@ fn main() {
         }
     };
 
-    let mut db = DatabaseFile {
+    let db = DatabaseFile {
         file,
         size: 0,
     };
 
-    println!("Created database");
-
-
     // ------------------------------------------------------------
-    // 2. Allocate page 0
+    // 1. Create two pages directly on disk.
+    //
+    // Buffer pool capacity = 1, so loading page 1 after page 0
+    // will evict page 0 and flush it.
     // ------------------------------------------------------------
 
-    let page_id = match db.allocate_page() {
+    let mut buffer_pool = BufferPool::new(1, db);
+
+    let page0 = match buffer_pool.allocate_page() {
         Ok(id) => {
-            println!("Allocated page {id}");
+            println!("allocated page {id}");
             id
         }
-
         Err(e) => {
-            eprintln!("failed to allocate page: {e}");
+            eprintln!("failed to allocate page 0: {e}");
             return;
         }
     };
 
+    let page1 = match buffer_pool.allocate_page() {
+        Ok(id) => {
+            println!("allocated page {id}");
+            id
+        }
+        Err(e) => {
+            eprintln!("failed to allocate page 1: {e}");
+            return;
+        }
+    };
 
     // ------------------------------------------------------------
-    // 3. Create a Page in memory
+    // 2. Create page 0 and write it to disk.
+    //
+    // This establishes known persisted state.
     // ------------------------------------------------------------
 
-    let header = PageHeader::new(page_id, PageType::Data);
+    let header = PageHeader::new(page0, PageType::Data);
     let buffer = [0u8; PAGE_SIZE];
 
     let mut page = Page::new(header, buffer);
 
-    println!("Created page in memory");
+    let mut record = [0u8; RECORD_SIZE];
+    record[0..2].copy_from_slice(&1u16.to_le_bytes());
+    record[2..7].copy_from_slice(b"hello");
 
-
-    // ------------------------------------------------------------
-    // 4. Write records into the page
-    // ------------------------------------------------------------
-
-    let mut record1 = [0u8; RECORD_SIZE];
-    record1[0..2].copy_from_slice(&1u16.to_le_bytes());
-    record1[2..7].copy_from_slice(b"hello");
-
-    match page.write_record(1, &record1, 7) {
-        Ok(size) => println!("write record 1: OK ({size} bytes)"),
+    match page.write_record(1, &record, 7) {
+        Ok(_) => println!("created page 0 with record: hello"),
         Err(e) => {
-            eprintln!("write record 1 failed: {:?}", e);
+            eprintln!("failed to write record: {:?}", e);
             return;
         }
     }
-
-
-    let mut record2 = [0u8; RECORD_SIZE];
-    record2[0..2].copy_from_slice(&2u16.to_le_bytes());
-    record2[2..7].copy_from_slice(b"world");
-
-    match page.write_record(2, &record2, 7) {
-        Ok(size) => println!("write record 2: OK ({size} bytes)"),
-        Err(e) => {
-            eprintln!("write record 2 failed: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 5. Serialize the modified header into the page buffer
-    // ------------------------------------------------------------
 
     page.header.serialise(&mut page.buffer);
 
-    println!("Serialized page");
+    if let Err(e) = page.flush(&buffer_pool.db_file) {
+        eprintln!("failed to flush initial page: {:?}", e);
+        return;
+    }
 
+    println!("page 0 persisted to disk");
 
     // ------------------------------------------------------------
-    // 6. Write the entire page to disk
+    // 3. Load page 0 through the buffer pool.
     // ------------------------------------------------------------
 
-    match db.write_page(page_id, &page.buffer) {
-        Ok(()) => println!("write page 0 to disk: OK"),
+    match buffer_pool.get_page(page0) {
+        Ok(page) => {
+            let mut read_buffer = [0u8; RECORD_SIZE];
+
+            match page.read_record(1, &mut read_buffer) {
+                Ok(size) => {
+                    assert_eq!(&read_buffer[2..size], b"hello");
+                    println!("get_page(page 0): loaded persisted data");
+                }
+                Err(e) => {
+                    eprintln!("failed to read cached page: {:?}", e);
+                    return;
+                }
+            }
+        }
+
         Err(e) => {
-            eprintln!("write page failed: {e}");
+            eprintln!("failed to get page 0: {:?}", e);
             return;
         }
     }
 
-
     // ------------------------------------------------------------
-    // 7. DESTROY THE IN-MEMORY PAGE
+    // 4. Modify page 0 THROUGH THE BUFFER POOL.
     //
-    // This is important.
+    // This should modify only the in-memory copy.
+    // It should NOT hit disk yet.
+    // ------------------------------------------------------------
+
+    {
+        let page = match buffer_pool.get_page_mut(page0) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("failed to get mutable page 0: {:?}", e);
+                return;
+            }
+        };
+
+        let mut updated = [0u8; RECORD_SIZE];
+        updated[0..2].copy_from_slice(&1u16.to_le_bytes());
+        updated[2..9].copy_from_slice(b"updated");
+
+        match page.update_record(1, &updated, 9) {
+            Ok(_) => println!("modified page 0 in buffer pool"),
+            Err(e) => {
+                eprintln!("failed to update page: {:?}", e);
+                return;
+            }
+        }
+
+        page.header.serialise(&mut page.buffer);
+    }
+
+    // ------------------------------------------------------------
+    // 5. Verify that the BUFFER contains the update.
+    // ------------------------------------------------------------
+
+    {
+        let page = match buffer_pool.get_page(page0) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("failed to get cached page 0: {:?}", e);
+                return;
+            }
+        };
+
+        let mut read_buffer = [0u8; RECORD_SIZE];
+
+        match page.read_record(1, &mut read_buffer) {
+            Ok(size) => {
+                assert_eq!(&read_buffer[2..size], b"updated");
+                println!("cached page 0 contains: updated");
+            }
+            Err(e) => {
+                eprintln!("failed to read cached update: {:?}", e);
+                return;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 6. Load page 1.
     //
-    // Everything we're about to read must come from database.db.
+    // Capacity is 1.
+    //
+    // Therefore page 0 must be evicted.
+    // Your LRU's pop_tail() should flush page 0.
     // ------------------------------------------------------------
 
-    drop(page);
-
-    println!("Dropped in-memory page");
-
-
-    // ------------------------------------------------------------
-    // 8. Load the page back from disk
-    // ------------------------------------------------------------
-
-    let mut page = match Page::load(page_id as u16, &db) {
-        Ok(p) => {
-            println!("Loaded page 0 from disk: OK");
-            p
-        }
-
-        Err(e) => {
-            eprintln!("failed to load page: {:?}", e);
-            return;
-        }
-    };
-
-
-    // ------------------------------------------------------------
-    // 9. Verify record 1 survived persistence
-    // ------------------------------------------------------------
-
-    let mut read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(1, &mut read_buffer) {
-        Ok(size) => {
-            println!(
-                "read persisted record 1: OK ({size} bytes): {:?}",
-                &read_buffer[2..size]
-            );
-
-            if &read_buffer[2..size] != b"hello" {
-                eprintln!("ERROR: record 1 contents are wrong");
-                return;
-            }
-        }
-
-        Err(e) => {
-            eprintln!("failed to read persisted record 1: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 10. Verify record 2 survived persistence
-    // ------------------------------------------------------------
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(2, &mut read_buffer) {
-        Ok(size) => {
-            println!(
-                "read persisted record 2: OK ({size} bytes): {:?}",
-                &read_buffer[2..size]
-            );
-
-            if &read_buffer[2..size] != b"world" {
-                eprintln!("ERROR: record 2 contents are wrong");
-                return;
-            }
-        }
-
-        Err(e) => {
-            eprintln!("failed to read persisted record 2: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 11. Modify the page
-    // ------------------------------------------------------------
-
-    let mut updated = [0u8; RECORD_SIZE];
-    updated[0..2].copy_from_slice(&1u16.to_le_bytes());
-    updated[2..9].copy_from_slice(b"updated");
-
-    match page.update_record(1, &updated, 9) {
-        Ok(size) => println!("update record 1: OK ({size} bytes)"),
-        Err(e) => {
-            eprintln!("update failed: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 12. Delete record 2
-    // ------------------------------------------------------------
-
-    match page.delete_record(2) {
-        Ok(()) => println!("delete record 2: OK"),
-        Err(e) => {
-            eprintln!("delete failed: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 13. Persist modified page
-    // ------------------------------------------------------------
-
-    page.header.serialise(&mut page.buffer);
-
-    match db.write_page(page_id, &page.buffer) {
-        Ok(()) => println!("write modified page to disk: OK"),
-        Err(e) => {
-            eprintln!("failed to write modified page: {e}");
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 14. Destroy it AGAIN
-    // ------------------------------------------------------------
-
-    drop(page);
-
-    println!("Dropped modified in-memory page");
-
-
-    // ------------------------------------------------------------
-    // 15. Load it AGAIN
-    // ------------------------------------------------------------
-
-    let page = match Page::load(page_id as u16, &db) {
-        Ok(p) => {
-            println!("Reloaded modified page from disk: OK");
-            p
-        }
-
-        Err(e) => {
-            eprintln!("failed to reload page: {:?}", e);
-            return;
-        }
-    };
-
-
-    // ------------------------------------------------------------
-    // 16. Verify update survived
-    // ------------------------------------------------------------
-
-    let mut read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(1, &mut read_buffer) {
-        Ok(size) => {
-            println!(
-                "read updated persisted record 1: OK ({size} bytes): {:?}",
-                &read_buffer[2..size]
-            );
-
-            if &read_buffer[2..size] != b"updated" {
-                eprintln!("ERROR: updated record is wrong");
-                return;
-            }
-        }
-
-        Err(e) => {
-            eprintln!("failed to read updated record: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 17. Verify deletion survived
-    // ------------------------------------------------------------
-
-    let mut read_buffer = [0u8; RECORD_SIZE];
-
-    match page.read_record(2, &mut read_buffer) {
+    match buffer_pool.get_page(page1) {
         Ok(_) => {
-            eprintln!("ERROR: deleted record survived");
-            return;
-        }
-
-        Err(RecordError::RecordAbsent) => {
-            println!(
-                "read deleted persisted record 2: correctly returned RecordAbsent"
-            );
+            println!("loaded page 1");
+            println!("page 0 was evicted from the buffer pool");
         }
 
         Err(e) => {
-            eprintln!("wrong error for deleted record: {:?}", e);
+            eprintln!("failed to load page 1: {:?}", e);
             return;
         }
     }
 
+    // ------------------------------------------------------------
+    // 7. Get page 0 again.
+    //
+    // It is no longer cached, so this MUST load it from disk.
+    //
+    // If eviction flushed correctly, the update should survive.
+    // ------------------------------------------------------------
+
+    match buffer_pool.get_page(page0) {
+        Ok(page) => {
+            let mut read_buffer = [0u8; RECORD_SIZE];
+
+            match page.read_record(1, &mut read_buffer) {
+                Ok(size) => {
+                    assert_eq!(&read_buffer[2..size], b"updated");
+
+                    println!(
+                        "reloaded page 0 from disk: update survived eviction"
+                    );
+                }
+
+                Err(e) => {
+                    eprintln!(
+                        "page 0 was reloaded but update was lost: {:?}",
+                        e
+                    );
+                    return;
+                }
+            }
+        }
+
+        Err(e) => {
+            eprintln!("failed to reload page 0: {:?}", e);
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 8. Explicit flush_page test.
+    //
+    // Modify page 0 again, then explicitly flush it.
+    // ------------------------------------------------------------
+
+    {
+        let page = match buffer_pool.get_page_mut(page0) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("failed to get mutable page 0: {:?}", e);
+                return;
+            }
+        };
+
+        let mut updated = [0u8; RECORD_SIZE];
+        updated[0..2].copy_from_slice(&1u16.to_le_bytes());
+        updated[2..10].copy_from_slice(b"flushed!");
+
+        match page.update_record(1, &updated, 10) {
+            Ok(_) => println!("modified page 0 again"),
+            Err(e) => {
+                eprintln!("failed to update page: {:?}", e);
+                return;
+            }
+        }
+
+        page.header.serialise(&mut page.buffer);
+    }
+
+    match buffer_pool.flush_page(page0) {
+        Ok(()) => println!("flush_page(page 0): OK"),
+        Err(e) => {
+            eprintln!("flush_page failed: {:?}", e);
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 9. Get page 0 again.
+    //
+    // flush_page() removed it from the cache, so this loads
+    // the persisted version.
+    // ------------------------------------------------------------
+
+    match buffer_pool.get_page(page0) {
+        Ok(page) => {
+            let mut read_buffer = [0u8; RECORD_SIZE];
+
+            match page.read_record(1, &mut read_buffer) {
+                Ok(size) => {
+                    assert_eq!(&read_buffer[2..size], b"flushed!");
+                    println!("reloaded page 0: explicit flush survived");
+                }
+
+                Err(e) => {
+                    eprintln!("failed to read flushed page: {:?}", e);
+                    return;
+                }
+            }
+        }
+
+        Err(e) => {
+            eprintln!("failed to reload flushed page: {:?}", e);
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 10. Flush everything remaining in the buffer pool.
+    // ------------------------------------------------------------
+
+    buffer_pool.flush_all();
 
     println!();
-    println!("=== PERSISTENCE TEST PASSED ===");
+    println!("=== BUFFER POOL TEST PASSED ===");
 }
