@@ -1,5 +1,6 @@
-use crate::slotted_page::{Page,RecordError};
-use crate::page::{DatabaseFile,CorruptedDataError};
+use crate::slotted_page::{Page};
+use crate::page::{DatabaseFile};
+use crate::db_errors::DbError;
 use crate::lru_cache::{LRUCache};
 
 pub struct BufferPool{
@@ -15,58 +16,58 @@ impl BufferPool{
             db_file,
         }
     }
-    pub fn get_page(&mut self, page_id: u64) -> Result<&Page, RecordError> {
+    pub fn get_page(&mut self, page_id: u64) -> Result<&Page, DbError> {
         let idx = match self.lru.get_index(page_id) {
             Ok(idx) => idx,
             Err(_) => {
                 let page = match Page::load(page_id as u16, &self.db_file) {
                     Ok(p) => p,
-                    Err(_) => return Err(RecordError::RecordAbsent),
+                    Err(_) => return Err(DbError::RecordAbsent),
                 };
 
                 match self.lru.set_new(page, &self.db_file) {
                     Ok(_) => {}
-                    Err(_) => return Err(RecordError::RecordMismatch),
+                    Err(_) => return Err(DbError::RecordMismatch),
                 };
 
                 match self.lru.dll.head {
                     Some(h) => h,
-                    None => return Err(RecordError::RecordMismatch),
+                    None => return Err(DbError::RecordMismatch),
                 }
             }
         };
 
         Ok(&self.lru.dll.nodes[idx].page)
     }
-    pub fn get_page_mut(&mut self, page_id: u64) -> Result<&mut Page, RecordError> {
+    pub fn get_page_mut(&mut self, page_id: u64) -> Result<&mut Page, DbError> {
         let idx = match self.lru.get_index(page_id) {
             Ok(idx) => idx,
             Err(_) => {
                 let page = match Page::load(page_id as u16, &self.db_file) {
                     Ok(p) => p,
-                    Err(_) => return Err(RecordError::RecordAbsent),
+                    Err(_) => return Err(DbError::RecordAbsent),
                 };
 
                 match self.lru.set_new(page, &self.db_file) {
                     Ok(_) => {}
-                    Err(_) => return Err(RecordError::RecordMismatch),
+                    Err(_) => return Err(DbError::RecordMismatch),
                 };
 
                 match self.lru.dll.head {
                     Some(h) => h,
-                    None => return Err(RecordError::RecordMismatch),
+                    None => return Err(DbError::RecordMismatch),
                 }
             }
         };
 
         Ok(&mut self.lru.dll.nodes[idx].page)
     }
-    pub fn flush_all(&mut self)->Result<(),CorruptedDataError>{
+    pub fn flush_all(&mut self)->Result<(),DbError>{
         let n=self.lru.dll.nodes.len();
         while self.lru.dll.trash.len()!=n{
             let x=match self.lru.dll.pop_tail(&self.db_file){
                 Ok(val)=>val,
-                Err(_)=>return Err(CorruptedDataError),
+                Err(_)=>return Err(DbError::CorruptedDataError),
             };
             let x=self.lru.dll.nodes[x].page.header.page_id;
             self.lru.map.remove(&x);
@@ -77,15 +78,18 @@ impl BufferPool{
         let x=self.db_file.allocate_page()?;
         Ok(x)
     }
-    pub fn flush_page(&mut self,page_id:u64)->Result<(),RecordError>{
-        let node=self.lru.get_mut(page_id)?;
+    pub fn flush_page(&mut self,page_id:u64)->Result<(),DbError>{
+        let node=match self.lru.get_mut(page_id){
+            Ok(v)=>v,
+            Err(_)=>return Err(DbError::PageAbsent),
+        };
         match node.page.flush(&mut self.db_file){
             Ok(_)=>{},
-            Err(_)=>return Err(RecordError::RecordMismatch),
+            Err(_)=>return Err(DbError::RecordMismatch),
         };
         match self.lru.delete(page_id){
             Ok(_)=>{},
-            Err(_)=>return Err(RecordError::RecordMismatch),
+            Err(_)=>return Err(DbError::RecordMismatch),
         };
         Ok(())
     }

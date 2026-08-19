@@ -1,3 +1,5 @@
+mod db_errors;
+mod b_tree;
 mod page;
 mod lru_cache;
 mod slotted_page;
@@ -6,7 +8,7 @@ mod buffer_pool;
 use std::fs::File;
 
 use page::{DatabaseFile, PAGE_SIZE, PageHeader, PageType};
-use slotted_page::{Page, RECORD_SIZE, RecordError};
+use slotted_page::{Page, RECORD_SIZE};
 use buffer_pool::BufferPool;
 
 fn main() {

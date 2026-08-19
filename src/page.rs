@@ -1,37 +1,9 @@
 use std::os::unix::prelude::FileExt;
-use std::fmt;
+use crate::db_errors::DbError;
 
 pub const PAGE_SIZE:usize=8192;
 pub const MAGIC : u32=69420;
 pub const PAGE_HEADER_SIZE:usize=96;
-
-#[derive(Debug)]
-pub struct CorruptedDataError;
-
-impl fmt::Display for CorruptedDataError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Corrupted data")
-    }
-}
-
-impl std::error::Error for CorruptedDataError {}
-
-#[derive(Debug)]
-pub struct PageAbsent;
-
-impl fmt::Display for PageAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Given page ID absent")
-    }
-}
-
-impl std::error::Error for PageAbsent {}
-
-#[derive(Debug)]
-pub enum PageError{
-    CorruptedDataError,
-    PageAbsent,
-}
 
 #[repr(u16)]
 pub enum PageType{
@@ -48,14 +20,14 @@ pub struct DatabaseFile{
 }
 
 impl DatabaseFile{
-    pub fn read_page(&self,page_id:u64,buf : &mut [u8;PAGE_SIZE])-> Result<(),PageError> {
+    pub fn read_page(&self,page_id:u64,buf : &mut [u8;PAGE_SIZE])-> Result<(),DbError> {
         let offset:u64=page_id*(PAGE_SIZE as u64);
         if offset+PAGE_SIZE as u64>self.size{
-            return Err(PageError::PageAbsent);
+            return Err(DbError::PageAbsent);
         }
         match self.file.read_at(buf,offset){
             Ok(_)=>return Ok(()),
-            Err(_)=>return Err(PageError::CorruptedDataError),
+            Err(_)=>return Err(DbError::PageAbsent),
         };
     }
     pub fn write_page(&self,page_id:u64,buf : &[u8;PAGE_SIZE])-> Result<(),std::io::Error> {
@@ -152,10 +124,10 @@ impl PageHeader {
         buffer[header_offset..header_offset+62].copy_from_slice(&self.reserved);
     }
 
-    pub fn deserialise(buffer:&mut [u8;PAGE_SIZE])->Result<Self,CorruptedDataError>{
+    pub fn deserialise(buffer:&mut [u8;PAGE_SIZE])->Result<Self,DbError>{
         let magic=u32::from_le_bytes(buffer[0..4].try_into().unwrap());
         if magic!=MAGIC{
-            return Err(CorruptedDataError);
+            return Err(DbError::CorruptedDataError);
         }
         let page_id=u64::from_le_bytes(buffer[4..12].try_into().unwrap());
         let page_type=match u16::from_le_bytes(buffer[12..14].try_into().unwrap()){
@@ -164,7 +136,7 @@ impl PageHeader {
             2=>PageType::BTreeLeaf,
             3=>PageType::BtreeInternal,
             4=>PageType::Meta,
-            _=>return Err(CorruptedDataError),
+            _=>return Err(DbError::CorruptedDataError),
         };
         let flags=u16::from_le_bytes(buffer[14..16].try_into().unwrap());
         let lsn=u64::from_le_bytes(buffer[16..24].try_into().unwrap());

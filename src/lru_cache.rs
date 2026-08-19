@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use crate::slotted_page::{Page,RecordError};
 use std::vec::Vec;
-use crate::page::{CorruptedDataError,DatabaseFile};
+use crate::page::{DatabaseFile};
+use crate::db_errors::CorruptedDataError;
 
 pub struct DLLNode{
     prev : Option<usize>,

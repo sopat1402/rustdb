@@ -3,7 +3,7 @@ use crate::page::PAGE_SIZE;
 use std::fmt;
 use std::vec::Vec;
 use crate::page::DatabaseFile;
-use crate::page::PageError;
+use crate::db_errors::DbError;
 use crate::page::PAGE_HEADER_SIZE;
 
 pub const RECORD_SIZE : usize =128;
@@ -73,7 +73,7 @@ pub struct Page{
 }
 
 impl Page{
-    pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,PageError>{
+    pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
         match db_file.read_page(id as u64,&mut buf){
             Ok(_)=>{},
@@ -81,7 +81,7 @@ impl Page{
         };
         let header:PageHeader=match PageHeader::deserialise(&mut buf){
             Ok(head)=>head,
-            Err(_)=>return Err(PageError::CorruptedDataError),
+            Err(_)=>return Err(DbError::CorruptedDataError),
         };
         let mut offset:u64=PAGE_HEADER_SIZE as u64;
         let mut trash:Vec<u16>=Vec::new();
