@@ -1,7 +1,8 @@
-use crate::slotted_page::{Page};
-use crate::page::{DatabaseFile};
+use crate::slotted_page::{Page,RECORD_SIZE,SLOT_SIZE};
+use crate::page::{DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
 use crate::db_errors::DbError;
 use crate::lru_cache::{LRUCache,DLLNode};
+use std::os::unix::prelude::FileExt;
 
 pub struct BufferPool{
     pub lru : LRUCache,
@@ -22,6 +23,20 @@ impl BufferPool{
             if node.page.has_space(){
                 return Ok(node.page.header.page_id);
             }
+        }
+        let mut offset:u64=0;
+        let mut buf=[0u8;10];
+        while offset+10<=self.db_file.size{
+            match self.db_file.page_metadata.read_at(&mut buf,offset){
+                Ok(_)=>{},
+                Err(_)=>return Err(DbError::FileError),
+            };
+            let page_id=u64::from_le_bytes(buf[0..8].try_into().unwrap());
+            let size=u16::from_le_bytes(buf[8..10].try_into().unwrap());
+            if PAGE_SIZE-PAGE_HEADER_SIZE-size as usize>=RECORD_SIZE+SLOT_SIZE{
+                return Ok(page_id);
+            }
+            offset+=10;
         }
         Err(DbError::SpaceOver)
     }

@@ -32,7 +32,7 @@ fn main() {
     // ------------------------------------------------------------
 
     let _ = std::fs::remove_file("database.db");
-
+    let _ = std::fs::remove_file("pages.page");
     let file = match File::options()
         .read(true)
         .write(true)
@@ -45,9 +45,21 @@ fn main() {
             return;
         }
     };
-
+    let page_metadata=match File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open("pages.page")
+    {
+        Ok(f)=>f,
+        Err(e)=>{
+            eprintln!("failed to create metadata : {e}");
+            return;
+        }
+    };
     let db = DatabaseFile {
         file,
+        page_metadata,
         size: 0,
     };
 

@@ -29,7 +29,8 @@ impl Index{
         page.read_record(record_id,record_buf)
     }
     pub fn write_record(&mut self,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
-        let page_id:u64=match self.pool.find_free_page(){
+        let page_id:u64=match self.pool.find_free_page(){   //currently only gives the cached free
+            //page
             Ok(id)=>id,
             Err(DbError::SpaceOver)=>{
                 let id=self.pool.allocate_page()?;
@@ -41,8 +42,12 @@ impl Index{
             },
             Err(e)=>return Err(e),
         };
-        let page:&mut Page=self.pool.get_page_mut(page_id)?;
-        page.write_record(self.next_record_id,buf,size)?;
+        let free_space={
+            let page:&mut Page=self.pool.get_page_mut(page_id)?;
+            page.write_record(self.next_record_id,buf,size)?;
+            page.free_space()
+        };
+        self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
         self.tree.insert(self.next_record_id,page_id)?;
         self.next_record_id+=1;
         Ok(size)
@@ -54,8 +59,12 @@ impl Index{
     }
     pub fn delete_record(&mut self,record_id:u16)->Result<(),DbError>{
         let page_id=self.tree.search(record_id)?;
-        let page:&mut Page=self.pool.get_page_mut(page_id)?;
-        page.delete_record(record_id)?;
+        let free_space={
+            let page:&mut Page=self.pool.get_page_mut(page_id)?;
+            page.delete_record(record_id)?;
+            page.free_space()
+        };
+        self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
         self.tree.delete(record_id)?;
         Ok(())
     }

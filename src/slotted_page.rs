@@ -6,6 +6,7 @@ use crate::db_errors::DbError;
 use crate::page::PAGE_HEADER_SIZE;
 
 pub const RECORD_SIZE : usize =128;
+pub const SLOT_SIZE : usize=6;
 
 pub struct Slot{
     pub id:u16,
@@ -34,7 +35,10 @@ pub struct Page{
 
 impl Page{
     pub fn has_space(&self)->bool{
-        (self.header.upper-self.header.lower)>=(RECORD_SIZE as u16+6)
+        (self.header.upper-self.header.lower)>=(RECORD_SIZE as u16+SLOT_SIZE as u16)
+    }
+    pub fn free_space(&self)->u16{
+        self.header.upper-self.header.lower
     }
     pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
@@ -61,7 +65,7 @@ impl Page{
             trash:trash,
         })
     }
-    pub fn flush(&mut self,db_file : &DatabaseFile)->Result<(),std::io::Error>{
+    pub fn flush(&mut self,db_file : &DatabaseFile)->Result<(),DbError>{
         self.header.serialise(&mut self.buffer);
         db_file.write_page(self.header.page_id,&self.buffer)?;
         Ok(())
@@ -83,7 +87,7 @@ impl Page{
                 slot=Some(candidate);
                 break;
             }
-            offset+=6;
+            offset+=SLOT_SIZE;
         }
         let slot=match slot{
             Some(s)=>s,
@@ -128,7 +132,7 @@ impl Page{
             return Ok(size)
         }
         let free_space=self.header.upper-self.header.lower;
-        if free_space<6+size as u16{
+        if free_space<SLOT_SIZE as u16+RECORD_SIZE as u16{
             return Err(DbError::SpaceOver);
         }
         self.buffer[self.header.upper as usize-RECORD_SIZE..self.header.upper as usize].copy_from_slice(&buf[0..RECORD_SIZE]);
@@ -143,7 +147,7 @@ impl Page{
         slot_bytes[4..6].copy_from_slice(&size_bytes);
         self.buffer[self.header.lower as usize..self.header.lower as usize+6].copy_from_slice(&slot_bytes);
         self.header.item_count+=1;
-        self.header.lower+=6;
+        self.header.lower+=SLOT_SIZE as u16;
         Ok(size)
     }
 
@@ -159,7 +163,7 @@ impl Page{
                 slot=Some(candidate);
                 break;
             }
-            offset+=6;
+            offset+=SLOT_SIZE;
         }
         let slot=match slot{
             Some(s)=>s,
@@ -188,7 +192,7 @@ impl Page{
                 slot=Some(candidate);
                 break;
             }
-            offset+=6;
+            offset+=SLOT_SIZE;
         }
         let slot=match slot{
             Some(s)=>s,

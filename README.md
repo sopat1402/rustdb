@@ -44,12 +44,25 @@ cached pages are scanned and the first one that isn't in the trash vector and ha
 each slot is 6 bytes and then it returns the page_id. this does not affect the LRU cache order. Then a simple write is made with that page_id after getting
 it from the buffer pool.
 
+However, a new page is allocated when the find_free_page search fails. So, the find_free_page needs to be upgraded
+to also perhaps search a metadata file that stores pages vs free space.
+
 Recommended to have fixed size records. No varchar or any funny business like that. That way no defragmentation is needed.
 
 BOTH B+ TREE and BUFFER POOL need a serialise and deserialise method to reconstruct and deconstruct them.
 
 Write record and update record find the size from the provided buffer. Should the caller provide the size instead? 
 Currently they find it by finding the first null byte. Yeah, I decided to pass the size there in write_record and update_record in index.rs.
+
+What bothers me more than serialising the buffer pool is : it is absurd to store the buffer pool.
+I should instead be maintaining a meta data file of page id as u64 in le bytes and then page.header.upper-page.header.lower so if cache doesn't have free space, it searches the meta data file of the pages.
+That way I know what pages are there. Also, I then don't even need to get rid of allocate page in the space over
+condition because then find free page only gives space over if even the meta data file says there's no free page. 
+This solves page fragmentation.
+
+K so get free page will now search the page metadata too. Upto db_file.size*10/PAGE_SIZE=>number of bytes
+10 byte increment. 10 bytes is u64 page id and u16 free space<=8096 bytes. I should probably start using all the
+constants I defined and make slot size as 6 bytes a magic constant thing for now.
 
 # What I learned
 

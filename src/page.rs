@@ -15,8 +15,9 @@ pub enum PageType{
 }
 
 pub struct DatabaseFile{
-    pub file : std::fs::File,
-    pub size : u64,
+    pub file            :   std::fs::File,
+    pub page_metadata   :   std::fs::File,
+    pub size            :   u64,
 }
 
 impl DatabaseFile{
@@ -30,13 +31,16 @@ impl DatabaseFile{
             Err(_)=>return Err(DbError::PageAbsent),
         };
     }
-    pub fn write_page(&self,page_id:u64,buf : &[u8;PAGE_SIZE])-> Result<(),std::io::Error> {
+    pub fn write_page(&self,page_id:u64,buf : &[u8;PAGE_SIZE])-> Result<(),DbError> {
         let offset:u64=page_id*(PAGE_SIZE as u64);
-        self.file.write_all_at(buf,offset)?;
+        let _=match self.file.write_all_at(buf,offset){
+            Ok(_)=>{},
+            Err(_)=>return Err(DbError::FileError),
+        };
         Ok(())
     }
     pub fn allocate_page(&mut self)->Result<u64,DbError>{
-        let offset:u64=self.size/(PAGE_SIZE as u64);
+        let offset:u64=self.size/(PAGE_SIZE as u64)+1;
         let page_id:u64=offset;
         let header : PageHeader=PageHeader::new(page_id,PageType::Free);
         let mut buffer = [0u8;PAGE_SIZE];
@@ -48,6 +52,19 @@ impl DatabaseFile{
         self.size+=PAGE_SIZE as u64;
 
         Ok(page_id)
+    }
+    pub fn edit_page_metadata(&mut self,page_id:u64,new_size:usize)->Result<(),DbError>{
+        let offset:u64=(page_id-1)*10;
+        let mut write_buf=[0u8;10];
+        let page_id_bytes=page_id.to_le_bytes();
+        let size_bytes=(new_size as u16).to_le_bytes();
+        write_buf[0..8].copy_from_slice(&page_id_bytes);
+        write_buf[8..10].copy_from_slice(&size_bytes);
+        let _=match self.page_metadata.write_all_at(&write_buf,offset){
+            Ok(_)=>{},
+            Err(_)=>return Err(DbError::FileError),
+        };
+        Ok(())
     }
 }
 
