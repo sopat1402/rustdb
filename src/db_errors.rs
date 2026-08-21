@@ -12,6 +12,17 @@ impl fmt::Display for CorruptedDataError {
 impl std::error::Error for CorruptedDataError {}
 
 #[derive(Debug)]
+pub struct DuplicateKey;
+
+impl fmt::Display for DuplicateKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Duplicate key")
+    }
+}
+
+impl std::error::Error for DuplicateKey {}
+
+#[derive(Debug)]
 pub struct PageAbsent;
 
 impl fmt::Display for PageAbsent {
@@ -45,6 +56,15 @@ impl fmt::Display for SpaceOver {
 impl std::error::Error for SpaceOver {}
 
 #[derive(Debug)]
+pub struct FileError;
+impl fmt::Display for FileError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error while writing file.")
+    }
+}
+impl std::error::Error for FileError {}
+
+#[derive(Debug)]
 pub struct RecordMismatch;
 
 impl fmt::Display for RecordMismatch {
@@ -62,4 +82,6 @@ pub enum DbError{
     RecordAbsent,
     PageAbsent,
     CorruptedDataError,
+    DuplicateKey,
+    FileError,
 }

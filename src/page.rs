@@ -35,13 +35,16 @@ impl DatabaseFile{
         self.file.write_all_at(buf,offset)?;
         Ok(())
     }
-    pub fn allocate_page(&mut self)->Result<u64,std::io::Error>{
+    pub fn allocate_page(&mut self)->Result<u64,DbError>{
         let offset:u64=self.size/(PAGE_SIZE as u64);
         let page_id:u64=offset;
         let header : PageHeader=PageHeader::new(page_id,PageType::Free);
         let mut buffer = [0u8;PAGE_SIZE];
         header.serialise(&mut buffer);
-        self.file.write_all_at(&buffer,self.size)?;
+        let _=match self.file.write_all_at(&buffer,self.size){
+            Ok(_)=>{},
+            Err(_)=>return Err(DbError::FileError),
+        };
         self.size+=PAGE_SIZE as u64;
 
         Ok(page_id)

@@ -1,5 +1,6 @@
+mod index;
 mod db_errors;
-mod b_tree;
+mod b_plus_tree;
 mod page;
 mod lru_cache;
 mod slotted_page;
@@ -7,12 +8,28 @@ mod buffer_pool;
 
 use std::fs::File;
 
-use page::{DatabaseFile, PAGE_SIZE, PageHeader, PageType};
-use slotted_page::{Page, RECORD_SIZE};
-use buffer_pool::BufferPool;
+use db_errors::DbError;
+use index::Index;
+use page::DatabaseFile;
+use slotted_page::RECORD_SIZE;
+
+fn make_record(id: u16, text: &[u8]) -> ([u8; RECORD_SIZE], usize) {
+    let mut record = [0u8; RECORD_SIZE];
+
+    record[0..2].copy_from_slice(&id.to_le_bytes());
+
+    let end = 2 + text.len();
+    record[2..end].copy_from_slice(text);
+
+    (record, end)
+}
 
 fn main() {
-    println!("=== BUFFER POOL TEST ===");
+    println!("=== INDEXING TEST ===");
+
+    // ------------------------------------------------------------
+    // 1. Start with a fresh database
+    // ------------------------------------------------------------
 
     let _ = std::fs::remove_file("database.db");
 
@@ -34,285 +51,227 @@ fn main() {
         size: 0,
     };
 
+    let mut index = Index::new(db);
+
+    println!("created index");
+
+
     // ------------------------------------------------------------
-    // 1. Create two pages directly on disk.
-    //
-    // Buffer pool capacity = 1, so loading page 1 after page 0
-    // will evict page 0 and flush it.
+    // 2. Write several records
     // ------------------------------------------------------------
 
-    let mut buffer_pool = BufferPool::new(1, db);
+    let (record1, size1) = make_record(1, b"hello");
 
-    let page0 = match buffer_pool.allocate_page() {
-        Ok(id) => {
-            println!("allocated page {id}");
-            id
-        }
+    match index.write_record(&record1, size1) {
+        Ok(_) => println!("write record 1: hello"),
         Err(e) => {
-            eprintln!("failed to allocate page 0: {e}");
-            return;
-        }
-    };
-
-    let page1 = match buffer_pool.allocate_page() {
-        Ok(id) => {
-            println!("allocated page {id}");
-            id
-        }
-        Err(e) => {
-            eprintln!("failed to allocate page 1: {e}");
-            return;
-        }
-    };
-
-    // ------------------------------------------------------------
-    // 2. Create page 0 and write it to disk.
-    //
-    // This establishes known persisted state.
-    // ------------------------------------------------------------
-
-    let header = PageHeader::new(page0, PageType::Data);
-    let buffer = [0u8; PAGE_SIZE];
-
-    let mut page = Page::new(header, buffer);
-
-    let mut record = [0u8; RECORD_SIZE];
-    record[0..2].copy_from_slice(&1u16.to_le_bytes());
-    record[2..7].copy_from_slice(b"hello");
-
-    match page.write_record(1, &record, 7) {
-        Ok(_) => println!("created page 0 with record: hello"),
-        Err(e) => {
-            eprintln!("failed to write record: {:?}", e);
+            eprintln!("failed to write record 1: {:?}", e);
             return;
         }
     }
 
-    page.header.serialise(&mut page.buffer);
 
-    if let Err(e) = page.flush(&buffer_pool.db_file) {
-        eprintln!("failed to flush initial page: {:?}", e);
-        return;
-    }
+    let (record2, size2) = make_record(2, b"world");
 
-    println!("page 0 persisted to disk");
-
-    // ------------------------------------------------------------
-    // 3. Load page 0 through the buffer pool.
-    // ------------------------------------------------------------
-
-    match buffer_pool.get_page(page0) {
-        Ok(page) => {
-            let mut read_buffer = [0u8; RECORD_SIZE];
-
-            match page.read_record(1, &mut read_buffer) {
-                Ok(size) => {
-                    assert_eq!(&read_buffer[2..size], b"hello");
-                    println!("get_page(page 0): loaded persisted data");
-                }
-                Err(e) => {
-                    eprintln!("failed to read cached page: {:?}", e);
-                    return;
-                }
-            }
-        }
-
+    match index.write_record(&record2, size2) {
+        Ok(_) => println!("write record 2: world"),
         Err(e) => {
-            eprintln!("failed to get page 0: {:?}", e);
+            eprintln!("failed to write record 2: {:?}", e);
             return;
         }
     }
 
-    // ------------------------------------------------------------
-    // 4. Modify page 0 THROUGH THE BUFFER POOL.
-    //
-    // This should modify only the in-memory copy.
-    // It should NOT hit disk yet.
-    // ------------------------------------------------------------
 
-    {
-        let page = match buffer_pool.get_page_mut(page0) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("failed to get mutable page 0: {:?}", e);
-                return;
-            }
-        };
+    let (record3, size3) = make_record(3, b"database");
 
-        let mut updated = [0u8; RECORD_SIZE];
-        updated[0..2].copy_from_slice(&1u16.to_le_bytes());
-        updated[2..9].copy_from_slice(b"updated");
-
-        match page.update_record(1, &updated, 9) {
-            Ok(_) => println!("modified page 0 in buffer pool"),
-            Err(e) => {
-                eprintln!("failed to update page: {:?}", e);
-                return;
-            }
-        }
-
-        page.header.serialise(&mut page.buffer);
-    }
-
-    // ------------------------------------------------------------
-    // 5. Verify that the BUFFER contains the update.
-    // ------------------------------------------------------------
-
-    {
-        let page = match buffer_pool.get_page(page0) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("failed to get cached page 0: {:?}", e);
-                return;
-            }
-        };
-
-        let mut read_buffer = [0u8; RECORD_SIZE];
-
-        match page.read_record(1, &mut read_buffer) {
-            Ok(size) => {
-                assert_eq!(&read_buffer[2..size], b"updated");
-                println!("cached page 0 contains: updated");
-            }
-            Err(e) => {
-                eprintln!("failed to read cached update: {:?}", e);
-                return;
-            }
+    match index.write_record(&record3, size3) {
+        Ok(_) => println!("write record 3: database"),
+        Err(e) => {
+            eprintln!("failed to write record 3: {:?}", e);
+            return;
         }
     }
 
+
     // ------------------------------------------------------------
-    // 6. Load page 1.
-    //
-    // Capacity is 1.
-    //
-    // Therefore page 0 must be evicted.
-    // Your LRU's pop_tail() should flush page 0.
+    // 3. Read records through the index
     // ------------------------------------------------------------
 
-    match buffer_pool.get_page(page1) {
+    let mut read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(1, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"hello");
+            println!("get record 1: hello");
+        }
+
+        Err(e) => {
+            eprintln!("failed to get record 1: {:?}", e);
+            return;
+        }
+    }
+
+
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(2, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"world");
+            println!("get record 2: world");
+        }
+
+        Err(e) => {
+            eprintln!("failed to get record 2: {:?}", e);
+            return;
+        }
+    }
+
+
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(3, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"database");
+            println!("get record 3: database");
+        }
+
+        Err(e) => {
+            eprintln!("failed to get record 3: {:?}", e);
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 4. Update record 2
+    // ------------------------------------------------------------
+
+    let (updated, updated_size) = make_record(2, b"updated");
+
+    match index.update_record(2, &updated, updated_size) {
+        Ok(_) => println!("update record 2: updated"),
+        Err(e) => {
+            eprintln!("failed to update record 2: {:?}", e);
+            return;
+        }
+    }
+
+
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(2, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"updated");
+            println!("get updated record 2: updated");
+        }
+
+        Err(e) => {
+            eprintln!("failed to read updated record 2: {:?}", e);
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 5. Delete record 2
+    // ------------------------------------------------------------
+
+    match index.delete_record(2) {
+        Ok(()) => println!("delete record 2: OK"),
+        Err(e) => {
+            eprintln!("failed to delete record 2: {:?}", e);
+            return;
+        }
+    }
+
+
+    // ------------------------------------------------------------
+    // 6. Verify deleted record is absent
+    // ------------------------------------------------------------
+
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(2, &mut read_buffer) {
         Ok(_) => {
-            println!("loaded page 1");
-            println!("page 0 was evicted from the buffer pool");
+            eprintln!("ERROR: deleted record 2 was found");
+            return;
+        }
+
+        Err(DbError::RecordAbsent) => {
+            println!("get deleted record 2: correctly returned RecordAbsent");
         }
 
         Err(e) => {
-            eprintln!("failed to load page 1: {:?}", e);
+            eprintln!("wrong error for deleted record: {:?}", e);
             return;
         }
     }
 
+
     // ------------------------------------------------------------
-    // 7. Get page 0 again.
-    //
-    // It is no longer cached, so this MUST load it from disk.
-    //
-    // If eviction flushed correctly, the update should survive.
+    // 7. Verify remaining records still exist
     // ------------------------------------------------------------
 
-    match buffer_pool.get_page(page0) {
-        Ok(page) => {
-            let mut read_buffer = [0u8; RECORD_SIZE];
+    read_buffer = [0u8; RECORD_SIZE];
 
-            match page.read_record(1, &mut read_buffer) {
-                Ok(size) => {
-                    assert_eq!(&read_buffer[2..size], b"updated");
-
-                    println!(
-                        "reloaded page 0 from disk: update survived eviction"
-                    );
-                }
-
-                Err(e) => {
-                    eprintln!(
-                        "page 0 was reloaded but update was lost: {:?}",
-                        e
-                    );
-                    return;
-                }
-            }
+    match index.get_record(1, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"hello");
+            println!("record 1 survived deletion of record 2");
         }
 
         Err(e) => {
-            eprintln!("failed to reload page 0: {:?}", e);
+            eprintln!("record 1 disappeared: {:?}", e);
             return;
         }
     }
 
-    // ------------------------------------------------------------
-    // 8. Explicit flush_page test.
-    //
-    // Modify page 0 again, then explicitly flush it.
-    // ------------------------------------------------------------
 
-    {
-        let page = match buffer_pool.get_page_mut(page0) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("failed to get mutable page 0: {:?}", e);
-                return;
-            }
-        };
+    read_buffer = [0u8; RECORD_SIZE];
 
-        let mut updated = [0u8; RECORD_SIZE];
-        updated[0..2].copy_from_slice(&1u16.to_le_bytes());
-        updated[2..10].copy_from_slice(b"flushed!");
-
-        match page.update_record(1, &updated, 10) {
-            Ok(_) => println!("modified page 0 again"),
-            Err(e) => {
-                eprintln!("failed to update page: {:?}", e);
-                return;
-            }
+    match index.get_record(3, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"database");
+            println!("record 3 survived deletion of record 2");
         }
 
-        page.header.serialise(&mut page.buffer);
-    }
-
-    match buffer_pool.flush_page(page0) {
-        Ok(()) => println!("flush_page(page 0): OK"),
         Err(e) => {
-            eprintln!("flush_page failed: {:?}", e);
+            eprintln!("record 3 disappeared: {:?}", e);
             return;
         }
     }
 
+
     // ------------------------------------------------------------
-    // 9. Get page 0 again.
-    //
-    // flush_page() removed it from the cache, so this loads
-    // the persisted version.
+    // 8. Write after deletion
     // ------------------------------------------------------------
 
-    match buffer_pool.get_page(page0) {
-        Ok(page) => {
-            let mut read_buffer = [0u8; RECORD_SIZE];
+    let (record4, size4) = make_record(4, b"new record");
 
-            match page.read_record(1, &mut read_buffer) {
-                Ok(size) => {
-                    assert_eq!(&read_buffer[2..size], b"flushed!");
-                    println!("reloaded page 0: explicit flush survived");
-                }
-
-                Err(e) => {
-                    eprintln!("failed to read flushed page: {:?}", e);
-                    return;
-                }
-            }
-        }
-
+    match index.write_record(&record4, size4) {
+        Ok(_) => println!("write record 4 after deletion: OK"),
         Err(e) => {
-            eprintln!("failed to reload flushed page: {:?}", e);
+            eprintln!("failed to write record 4: {:?}", e);
             return;
         }
     }
 
-    // ------------------------------------------------------------
-    // 10. Flush everything remaining in the buffer pool.
-    // ------------------------------------------------------------
 
-    buffer_pool.flush_all();
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(4, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"new record");
+            println!("get record 4: new record");
+        }
+
+        Err(e) => {
+            eprintln!("failed to get record 4: {:?}", e);
+            return;
+        }
+    }
+
 
     println!();
-    println!("=== BUFFER POOL TEST PASSED ===");
+    println!("=== INDEXING TEST PASSED ===");
 }

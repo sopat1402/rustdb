@@ -1,7 +1,7 @@
 use crate::slotted_page::{Page};
 use crate::page::{DatabaseFile};
 use crate::db_errors::DbError;
-use crate::lru_cache::{LRUCache};
+use crate::lru_cache::{LRUCache,DLLNode};
 
 pub struct BufferPool{
     pub lru : LRUCache,
@@ -15,6 +15,15 @@ impl BufferPool{
             lru,
             db_file,
         }
+    }
+    pub fn find_free_page(&self)->Result<u64,DbError>{
+        for i in 0..self.lru.dll.nodes.len(){
+            let node:&DLLNode=&self.lru.dll.nodes[i];
+            if node.page.has_space(){
+                return Ok(node.page.header.page_id);
+            }
+        }
+        Err(DbError::SpaceOver)
     }
     pub fn get_page(&mut self, page_id: u64) -> Result<&Page, DbError> {
         let idx = match self.lru.get_index(page_id) {
@@ -74,8 +83,11 @@ impl BufferPool{
         }
         Ok(())
     }
-    pub fn allocate_page(&mut self)->Result<u64,std::io::Error>{
-        let x=self.db_file.allocate_page()?;
+    pub fn allocate_page(&mut self)->Result<u64,DbError>{
+        let x=match self.db_file.allocate_page(){
+            Ok(id)=>id,
+            Err(e)=>return Err(e),
+        };
         Ok(x)
     }
     pub fn flush_page(&mut self,page_id:u64)->Result<(),DbError>{

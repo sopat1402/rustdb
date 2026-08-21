@@ -1,51 +1,11 @@
 use crate::page::PageHeader;
 use crate::page::PAGE_SIZE;
-use std::fmt;
 use std::vec::Vec;
 use crate::page::DatabaseFile;
 use crate::db_errors::DbError;
 use crate::page::PAGE_HEADER_SIZE;
 
 pub const RECORD_SIZE : usize =128;
-
-#[derive(Debug)]
-pub struct RecordAbsent;
-
-impl fmt::Display for RecordAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "corrupted data")
-    }
-}
-
-impl std::error::Error for RecordAbsent {}
-
-#[derive(Debug)]
-pub struct SpaceOver;
-
-impl fmt::Display for SpaceOver {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "page out of space")
-    }
-}
-
-impl std::error::Error for SpaceOver {}
-
-#[derive(Debug)]
-pub struct RecordMismatch;
-
-impl fmt::Display for RecordMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "record data corrupted")
-    }
-}
-
-impl std::error::Error for RecordMismatch {}
-#[derive(Debug)]
-pub enum RecordError{
-    SpaceOver,
-    RecordMismatch,
-    RecordAbsent
-}
 
 pub struct Slot{
     pub id:u16,
@@ -73,6 +33,9 @@ pub struct Page{
 }
 
 impl Page{
+    pub fn has_space(&self)->bool{
+        (self.header.upper-self.header.lower)>=(RECORD_SIZE as u16+6)
+    }
     pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
         match db_file.read_page(id as u64,&mut buf){
@@ -111,7 +74,7 @@ impl Page{
             trash,
         }
     }
-    pub fn read_record(&self,record_id : u16,buf:&mut [u8;RECORD_SIZE])->Result<usize,RecordError>{
+    pub fn read_record(&self,record_id : u16,buf:&mut [u8;RECORD_SIZE])->Result<usize,DbError>{
         let mut offset:usize=PAGE_HEADER_SIZE;
         let mut slot : Option<Slot>=None;
         for _ in 0..self.header.item_count{
@@ -124,37 +87,37 @@ impl Page{
         }
         let slot=match slot{
             Some(s)=>s,
-            None=>return Err(RecordError::RecordAbsent),
+            None=>return Err(DbError::RecordAbsent),
         };
         offset=slot.offset as usize;
         let bytes_read=slot.size as usize;
         if bytes_read>RECORD_SIZE{
-            return Err(RecordError::RecordMismatch);
+            return Err(DbError::RecordMismatch);
         }
         if slot.offset as usize>=PAGE_SIZE{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::RecordAbsent);
         }
         if slot.offset<self.header.upper{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::RecordAbsent);
         }
         if slot.size==0{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::RecordAbsent);
         }
         if offset + bytes_read > PAGE_SIZE {
-            return Err(RecordError::RecordMismatch);
+            return Err(DbError::RecordMismatch);
         }
         buf[0..bytes_read].copy_from_slice(&self.buffer[offset..offset+bytes_read]);
         Ok(bytes_read)
     }
 
-    pub fn write_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size : usize)->Result<usize,RecordError>{
+    pub fn write_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size : usize)->Result<usize,DbError>{
         if size>RECORD_SIZE{
-            return Err(RecordError::SpaceOver);
+            return Err(DbError::SpaceOver);
         }
         if !self.trash.is_empty(){
             let slot:u16=match self.trash.pop(){
                 Some(o)=>o,
-                None=>return Err(RecordError::RecordMismatch),
+                None=>return Err(DbError::CorruptedDataError),
             };
             let id_bytes=record_id.to_le_bytes();
             self.buffer[slot as usize..slot as usize+2].copy_from_slice(&id_bytes);
@@ -166,7 +129,7 @@ impl Page{
         }
         let free_space=self.header.upper-self.header.lower;
         if free_space<6+size as u16{
-            return Err(RecordError::SpaceOver);
+            return Err(DbError::SpaceOver);
         }
         self.buffer[self.header.upper as usize-RECORD_SIZE..self.header.upper as usize].copy_from_slice(&buf[0..RECORD_SIZE]);
         self.header.upper-=RECORD_SIZE as u16;
@@ -184,9 +147,9 @@ impl Page{
         Ok(size)
     }
 
-    pub fn update_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,RecordError>{
+    pub fn update_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
         if size>RECORD_SIZE{
-            return Err(RecordError::SpaceOver);
+            return Err(DbError::SpaceOver);
         }
         let mut offset:usize=PAGE_HEADER_SIZE;
         let mut slot : Option<Slot>=None;
@@ -200,14 +163,14 @@ impl Page{
         }
         let slot=match slot{
             Some(s)=>s,
-            None=>return Err(RecordError::RecordAbsent),
+            None=>return Err(DbError::RecordAbsent),
         };
         let test_id=u16::from_le_bytes(self.buffer[slot.offset as usize..slot.offset as usize+2].try_into().unwrap()); //check if id changed
         if test_id!=slot.id{
-            return Err(RecordError::RecordMismatch);
+            return Err(DbError::RecordMismatch);
         }
         if slot.size==0{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::RecordAbsent);
         }
         //will use offset to update the slot
         self.buffer[slot.offset as usize..slot.offset as usize+RECORD_SIZE].copy_from_slice(&buf[0..RECORD_SIZE]);
@@ -216,7 +179,7 @@ impl Page{
         Ok(size)
     }
 
-    pub fn delete_record(&mut self,record_id:u16)->Result<(),RecordError>{
+    pub fn delete_record(&mut self,record_id:u16)->Result<(),DbError>{
         let mut offset:usize=PAGE_HEADER_SIZE;
         let mut slot : Option<Slot>=None;
         for _ in 0..self.header.item_count{
@@ -229,18 +192,18 @@ impl Page{
         }
         let slot=match slot{
             Some(s)=>s,
-            None=>return Err(RecordError::RecordAbsent),
+            None=>return Err(DbError::RecordAbsent),
         };
         self.trash.push(offset as u16);
         let bytes_read=slot.size as usize;
         if bytes_read>RECORD_SIZE{
-            return Err(RecordError::RecordMismatch);
+            return Err(DbError::CorruptedDataError);
         }
         if slot.offset as usize>=PAGE_SIZE{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::CorruptedDataError);
         }
         if slot.offset<self.header.upper{
-            return Err(RecordError::RecordAbsent);
+            return Err(DbError::CorruptedDataError);
         }
         let new_size:u16=0;
         let zero_bytes=new_size.to_le_bytes();
