@@ -1,3 +1,5 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
 use crate::slotted_page::{Page,RECORD_SIZE,SLOT_SIZE};
 use crate::page::{DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
 use crate::db_errors::DbError;

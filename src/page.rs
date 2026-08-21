@@ -1,3 +1,5 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
 use std::os::unix::prelude::FileExt;
 use crate::db_errors::DbError;
 
@@ -17,6 +19,7 @@ pub enum PageType{
 pub struct DatabaseFile{
     pub file            :   std::fs::File,
     pub page_metadata   :   std::fs::File,
+    pub btree           :   std::fs::File,
     pub size            :   u64,
 }
 

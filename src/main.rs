@@ -1,3 +1,6 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
+
 mod index;
 mod db_errors;
 mod b_plus_tree;
@@ -24,53 +27,52 @@ fn make_record(id: u16, text: &[u8]) -> ([u8; RECORD_SIZE], usize) {
     (record, end)
 }
 
-fn main() {
-    println!("=== INDEXING TEST ===");
-
-    // ------------------------------------------------------------
-    // 1. Start with a fresh database
-    // ------------------------------------------------------------
-
-    let _ = std::fs::remove_file("database.db");
-    let _ = std::fs::remove_file("pages.page");
-    let file = match File::options()
-        .read(true)
-        .write(true)
-        .create(true)
+fn open_database() -> Result<DatabaseFile, DbError> {
+    let file = File::options()
+        .read(true).write(true).create(true)
         .open("database.db")
-    {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("failed to create database: {e}");
-            return;
-        }
-    };
-    let page_metadata=match File::options()
-        .read(true)
-        .write(true)
-        .create(true)
+        .map_err(|_| DbError::FileError)?;
+
+    let page_metadata = File::options()
+        .read(true).write(true).create(true)
         .open("pages.page")
-    {
-        Ok(f)=>f,
-        Err(e)=>{
-            eprintln!("failed to create metadata : {e}");
-            return;
-        }
-    };
-    let db = DatabaseFile {
+        .map_err(|_| DbError::FileError)?;
+
+    let btree = File::options()
+        .read(true).write(true).create(true)
+        .open("btree.tree")
+        .map_err(|_| DbError::FileError)?;
+
+    let size = file.metadata().map_err(|_| DbError::FileError)?.len();
+
+    Ok(DatabaseFile {
         file,
         page_metadata,
-        size: 0,
+        btree,
+        size,
+    })
+}
+fn main() {
+    println!("=== PERSISTENT INDEXING TEST ===");
+    let _ = std::fs::remove_file("database.db");
+    let _ = std::fs::remove_file("pages.page");
+    let _ = std::fs::remove_file("btree.tree");
+
+    let db = match open_database() {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("failed to open database files: {:?}", e);
+            return;
+        }
     };
 
-    let mut index = Index::new(db);
-
-    println!("created index");
-
-
-    // ------------------------------------------------------------
-    // 2. Write several records
-    // ------------------------------------------------------------
+    let mut index = match Index::new(db) {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("failed to create index: {:?}", e);
+            return;
+        }
+    };
 
     let (record1, size1) = make_record(1, b"hello");
 
@@ -81,8 +83,6 @@ fn main() {
             return;
         }
     }
-
-
     let (record2, size2) = make_record(2, b"world");
 
     match index.write_record(&record2, size2) {
@@ -92,8 +92,6 @@ fn main() {
             return;
         }
     }
-
-
     let (record3, size3) = make_record(3, b"database");
 
     match index.write_record(&record3, size3) {
@@ -103,14 +101,7 @@ fn main() {
             return;
         }
     }
-
-
-    // ------------------------------------------------------------
-    // 3. Read records through the index
-    // ------------------------------------------------------------
-
     let mut read_buffer = [0u8; RECORD_SIZE];
-
     match index.get_record(1, &mut read_buffer) {
         Ok(size) => {
             assert_eq!(&read_buffer[2..size], b"hello");
@@ -122,8 +113,6 @@ fn main() {
             return;
         }
     }
-
-
     read_buffer = [0u8; RECORD_SIZE];
 
     match index.get_record(2, &mut read_buffer) {
@@ -137,8 +126,6 @@ fn main() {
             return;
         }
     }
-
-
     read_buffer = [0u8; RECORD_SIZE];
 
     match index.get_record(3, &mut read_buffer) {
@@ -152,12 +139,6 @@ fn main() {
             return;
         }
     }
-
-
-    // ------------------------------------------------------------
-    // 4. Update record 2
-    // ------------------------------------------------------------
-
     let (updated, updated_size) = make_record(2, b"updated");
 
     match index.update_record(2, &updated, updated_size) {
@@ -167,8 +148,6 @@ fn main() {
             return;
         }
     }
-
-
     read_buffer = [0u8; RECORD_SIZE];
 
     match index.get_record(2, &mut read_buffer) {
@@ -182,12 +161,6 @@ fn main() {
             return;
         }
     }
-
-
-    // ------------------------------------------------------------
-    // 5. Delete record 2
-    // ------------------------------------------------------------
-
     match index.delete_record(2) {
         Ok(()) => println!("delete record 2: OK"),
         Err(e) => {
@@ -195,12 +168,6 @@ fn main() {
             return;
         }
     }
-
-
-    // ------------------------------------------------------------
-    // 6. Verify deleted record is absent
-    // ------------------------------------------------------------
-
     read_buffer = [0u8; RECORD_SIZE];
 
     match index.get_record(2, &mut read_buffer) {
@@ -218,46 +185,6 @@ fn main() {
             return;
         }
     }
-
-
-    // ------------------------------------------------------------
-    // 7. Verify remaining records still exist
-    // ------------------------------------------------------------
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match index.get_record(1, &mut read_buffer) {
-        Ok(size) => {
-            assert_eq!(&read_buffer[2..size], b"hello");
-            println!("record 1 survived deletion of record 2");
-        }
-
-        Err(e) => {
-            eprintln!("record 1 disappeared: {:?}", e);
-            return;
-        }
-    }
-
-
-    read_buffer = [0u8; RECORD_SIZE];
-
-    match index.get_record(3, &mut read_buffer) {
-        Ok(size) => {
-            assert_eq!(&read_buffer[2..size], b"database");
-            println!("record 3 survived deletion of record 2");
-        }
-
-        Err(e) => {
-            eprintln!("record 3 disappeared: {:?}", e);
-            return;
-        }
-    }
-
-
-    // ------------------------------------------------------------
-    // 8. Write after deletion
-    // ------------------------------------------------------------
-
     let (record4, size4) = make_record(4, b"new record");
 
     match index.write_record(&record4, size4) {
@@ -267,8 +194,6 @@ fn main() {
             return;
         }
     }
-
-
     read_buffer = [0u8; RECORD_SIZE];
 
     match index.get_record(4, &mut read_buffer) {
@@ -282,8 +207,122 @@ fn main() {
             return;
         }
     }
+    match index.pool.flush_all() {
+        Ok(()) => println!("flushed buffer pool"),
+        Err(e) => {
+            eprintln!("failed to flush buffer pool: {:?}", e);
+            return;
+        }
+    }
+    match index.tree.serialise(&mut index.pool.db_file) {
+        Ok(()) => println!("serialised B+ tree"),
+        Err(e) => {
+            eprintln!("failed to serialise B+ tree: {:?}", e);
+            return;
+        }
+    }
+    drop(index);
+    println!("dropped entire index");
+    let db = match open_database() {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("failed to reopen database files: {:?}", e);
+            return;
+        }
+    };
+    let mut index = match Index::new(db) {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("failed to create index: {:?}", e);
+            return;
+        }
+    };
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(1, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"hello");
+
+            println!("record 1 survived restart: hello");
+        }
+
+        Err(e) => {
+            eprintln!("record 1 was lost after restart: {:?}", e);
+            return;
+        }
+    }
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(2, &mut read_buffer) {
+        Ok(_) => {
+            eprintln!("ERROR: deleted record 2 survived restart");
+            return;
+        }
+
+        Err(DbError::RecordAbsent) => {
+            println!("deleted record 2 remained deleted after restart");
+        }
+
+        Err(e) => {
+            eprintln!("wrong error for deleted record after restart: {:?}", e);
+            return;
+        }
+    }
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(3, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"database");
+
+            println!("record 3 survived restart: database");
+        }
+
+        Err(e) => {
+            eprintln!("record 3 was lost after restart: {:?}", e);
+            return;
+        }
+    }
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(4, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"new record");
+
+            println!("record 4 survived restart: new record");
+        }
+
+        Err(e) => {
+            eprintln!("record 4 was lost after restart: {:?}", e);
+            return;
+        }
+    }
+    let (record5, size5) = make_record(5, b"after restart");
+
+    match index.write_record(&record5, size5) {
+        Ok(_) => println!("write record 5 after restart: OK"),
+        Err(e) => {
+            eprintln!("failed to write record 5 after restart: {:?}", e);
+            return;
+        }
+    }
+
+
+    read_buffer = [0u8; RECORD_SIZE];
+
+    match index.get_record(5, &mut read_buffer) {
+        Ok(size) => {
+            assert_eq!(&read_buffer[2..size], b"after restart");
+
+            println!("record 5 written successfully after restart");
+        }
+
+        Err(e) => {
+            eprintln!("failed to get record 5 after restart: {:?}", e);
+            return;
+        }
+    }
 
 
     println!();
-    println!("=== INDEXING TEST PASSED ===");
+    println!("=== PERSISTENT INDEXING TEST PASSED ===");
 }

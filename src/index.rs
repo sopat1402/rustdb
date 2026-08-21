@@ -1,3 +1,5 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
 use crate::db_errors::DbError;
 use crate::buffer_pool::BufferPool;
 use crate::b_plus_tree::BPlusTree;
@@ -13,15 +15,15 @@ pub struct Index{
 }
 
 impl Index{
-    pub fn new(db_file:DatabaseFile)->Self{
-        let tree=BPlusTree::new();
-        let pool=BufferPool::new(POOL_CAPACITY,db_file);
-        let next_record_id:u16=1;
-        Self{
+    pub fn new(mut db_file: DatabaseFile) -> Result<Self, DbError> {
+        let tree = BPlusTree::deserialise(&mut db_file)?;
+        let pool = BufferPool::new(POOL_CAPACITY, db_file);
+        let next_record_id: u16 = tree.max_key().map(|k| k + 1).unwrap_or(1);
+        Ok(Self {
             tree,
             pool,
             next_record_id,
-        }
+        })
     }
     pub fn get_record(&mut self,record_id : u16,record_buf : &mut [u8;RECORD_SIZE])->Result<usize,DbError>{
         let page_id:u64=self.tree.search(record_id)?;

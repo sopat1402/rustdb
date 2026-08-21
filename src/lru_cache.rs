@@ -1,3 +1,5 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
 use std::collections::HashMap;
 use crate::slotted_page::{Page};
 use std::vec::Vec;

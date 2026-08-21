@@ -1,7 +1,17 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
+
 use std::vec::Vec;
+use std::collections::HashSet;
+use std::os::unix::prelude::FileExt;
 use crate::db_errors::DbError;
+use crate::page::DatabaseFile;
 
 const MAX_SIZE: usize = 4; // only 4 for dev tests first
+
+const NODE_TAG_INTERNAL: u8 = 0;
+const NODE_TAG_LEAF: u8 = 1;
+const NODE_TAG_TRASHED: u8 = 2; // occupies a slot in `nodes` but holds no live data
 
 pub struct Entry {
     pub record_id: u16,
@@ -383,4 +393,177 @@ impl BPlusTree {
 
         self.trash.push(right_id);
     }
+    pub fn serialise(&self, db_file: &mut DatabaseFile) -> Result<(), DbError> {
+        let mut buf: Vec<u8> = Vec::new();
+
+        buf.extend_from_slice(&(self.m as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.root as u64).to_le_bytes());
+
+        buf.extend_from_slice(&(self.trash.len() as u64).to_le_bytes());
+        for &t in &self.trash {
+            buf.extend_from_slice(&(t as u64).to_le_bytes());
+        }
+
+        let trashed: HashSet<usize> = self.trash.iter().copied().collect();
+
+        buf.extend_from_slice(&(self.nodes.len() as u64).to_le_bytes());
+        for (id, node) in self.nodes.iter().enumerate() {
+            if trashed.contains(&id) {
+                buf.push(NODE_TAG_TRASHED);
+                continue;
+            }
+            match node {
+                Node::Internal { keys, children } => {
+                    buf.push(NODE_TAG_INTERNAL);
+                    buf.extend_from_slice(&(keys.len() as u64).to_le_bytes());
+                    for &k in keys {
+                        buf.extend_from_slice(&k.to_le_bytes());
+                    }
+                    buf.extend_from_slice(&(children.len() as u64).to_le_bytes());
+                    for &c in children {
+                        buf.extend_from_slice(&(c as u64).to_le_bytes());
+                    }
+                }
+                Node::Leaf { entries, next } => {
+                    buf.push(NODE_TAG_LEAF);
+                    buf.extend_from_slice(&(entries.len() as u64).to_le_bytes());
+                    for e in entries {
+                        buf.extend_from_slice(&e.record_id.to_le_bytes());
+                        buf.extend_from_slice(&e.page_id.to_le_bytes());
+                    }
+                    match next {
+                        Some(n) => {
+                            buf.push(1);
+                            buf.extend_from_slice(&(*n as u64).to_le_bytes());
+                        }
+                        None => buf.push(0),
+                    }
+                }
+            }
+        }
+
+        match db_file.btree.write_all_at(&buf, 0) {
+            Ok(_) => {}
+            Err(_) => return Err(DbError::FileError),
+        };
+        match db_file.btree.set_len(buf.len() as u64) {
+            Ok(_) => {}
+            Err(_) => return Err(DbError::FileError),
+        };
+        match db_file.btree.sync_all() {
+            Ok(_) => {}
+            Err(_) => return Err(DbError::FileError),
+        };
+        Ok(())
+    }
+    pub fn max_key(&self) -> Option<u16> {
+        let mut curr = self.root;
+        loop {
+            match &self.nodes[curr] {
+                Node::Internal { children, .. } => {
+                    curr = *children.last().unwrap();
+                }
+                Node::Leaf { entries, .. } => {
+                    return entries.last().map(|e| e.record_id);
+                }
+            }
+        }
+    }
+    pub fn deserialise(db_file: &mut DatabaseFile) -> Result<Self, DbError> {
+        let len = match db_file.btree.metadata() {
+            Ok(meta) => meta.len(),
+            Err(_) => return Err(DbError::FileError),
+        };
+
+        if len == 0 {
+            return Ok(Self::new());
+        }
+
+        let mut buf = vec![0u8; len as usize];
+        match db_file.btree.read_at(&mut buf, 0) {
+            Ok(_) => {}
+            Err(_) => return Err(DbError::FileError),
+        };
+
+        let mut pos: usize = 0;
+
+        let m = read_u64(&buf, &mut pos)? as usize;
+        let root = read_u64(&buf, &mut pos)? as usize;
+
+        let trash_len = read_u64(&buf, &mut pos)?;
+        let mut trash: Vec<usize> = Vec::with_capacity(trash_len as usize);
+        for _ in 0..trash_len {
+            trash.push(read_u64(&buf, &mut pos)? as usize);
+        }
+
+        let nodes_len = read_u64(&buf, &mut pos)?;
+        let mut nodes: Vec<Node> = Vec::with_capacity(nodes_len as usize);
+
+        for _ in 0..nodes_len {
+            let tag = read_u8(&buf, &mut pos)?;
+            let node = match tag {
+                NODE_TAG_INTERNAL => {
+                    let keys_len = read_u64(&buf, &mut pos)?;
+                    let mut keys: Vec<u16> = Vec::with_capacity(keys_len as usize);
+                    for _ in 0..keys_len {
+                        keys.push(read_u16(&buf, &mut pos)?);
+                    }
+                    let children_len = read_u64(&buf, &mut pos)?;
+                    let mut children: Vec<usize> = Vec::with_capacity(children_len as usize);
+                    for _ in 0..children_len {
+                        children.push(read_u64(&buf, &mut pos)? as usize);
+                    }
+                    Node::Internal { keys, children }
+                }
+                NODE_TAG_LEAF => {
+                    let entries_len = read_u64(&buf, &mut pos)?;
+                    let mut entries: Vec<Entry> = Vec::with_capacity(entries_len as usize);
+                    for _ in 0..entries_len {
+                        let record_id = read_u16(&buf, &mut pos)?;
+                        let page_id = read_u64(&buf, &mut pos)?;
+                        entries.push(Entry { record_id, page_id });
+                    }
+                    let has_next = read_u8(&buf, &mut pos)?;
+                    let next = if has_next == 1 {
+                        Some(read_u64(&buf, &mut pos)? as usize)
+                    } else {
+                        None
+                    };
+                    Node::Leaf { entries, next }
+                }
+                NODE_TAG_TRASHED => Node::Leaf { entries: Vec::new(), next: None },
+                _ => return Err(DbError::CorruptedDataError),
+            };
+            nodes.push(node);
+        }
+
+        Ok(Self { root, nodes, trash, m })
+    }
+}
+
+fn read_u8(buf: &[u8], pos: &mut usize) -> Result<u8, DbError> {
+    if *pos + 1 > buf.len() {
+        return Err(DbError::CorruptedDataError);
+    }
+    let v = buf[*pos];
+    *pos += 1;
+    Ok(v)
+}
+
+fn read_u16(buf: &[u8], pos: &mut usize) -> Result<u16, DbError> {
+    if *pos + 2 > buf.len() {
+        return Err(DbError::CorruptedDataError);
+    }
+    let v = u16::from_le_bytes(buf[*pos..*pos + 2].try_into().unwrap());
+    *pos += 2;
+    Ok(v)
+}
+
+fn read_u64(buf: &[u8], pos: &mut usize) -> Result<u64, DbError> {
+    if *pos + 8 > buf.len() {
+        return Err(DbError::CorruptedDataError);
+    }
+    let v = u64::from_le_bytes(buf[*pos..*pos + 8].try_into().unwrap());
+    *pos += 8;
+    Ok(v)
 }
