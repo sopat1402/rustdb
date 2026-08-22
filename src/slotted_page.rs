@@ -50,14 +50,14 @@ impl Page{
     }
 
     fn check_checksum(buf : &mut [u8;PAGE_SIZE])->bool{
-        //checksum is bytes 24 to 32
-        let file_checksum=u32::from_le_bytes(buf[24..32].try_into().unwrap());
+        //checksum is bytes 24 to 28
+        let file_checksum=u32::from_le_bytes(buf[24..28].try_into().unwrap());
         let x:u32=0;
         let x_bytes:[u8;4]=x.to_le_bytes();
-        buf[24..32].copy_from_slice(&x_bytes);
+        buf[24..28].copy_from_slice(&x_bytes);
         let calc_checksum:u32=crc32(buf);
         let f_chk_bytes=file_checksum.to_le_bytes();
-        buf[24..32].copy_from_slice(&f_chk_bytes);
+        buf[24..28].copy_from_slice(&f_chk_bytes);
         file_checksum==calc_checksum
     }
 
@@ -104,6 +104,10 @@ impl Page{
             return Ok(());
         }
         self.header.flags=PageFlags::Clean;
+        self.header.checksum=0;
+        self.header.serialise(&mut self.buffer);
+        let chksum=crc32(&mut self.buffer);
+        self.header.checksum=chksum;
         self.header.serialise(&mut self.buffer);
         match db_file.write_page(self.header.page_id,&self.buffer){
             Ok(_)=>{},
@@ -125,7 +129,7 @@ impl Page{
         };
         page.header.checksum=chks;
         let chks_bytes=chks.to_le_bytes();
-        page.buffer[24..32].copy_from_slice(&chks_bytes);
+        page.buffer[24..28].copy_from_slice(&chks_bytes);
         page
     }
 
