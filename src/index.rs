@@ -11,21 +11,21 @@ pub const POOL_CAPACITY:usize=8; //magic number for now
 pub struct Index{
     pub tree            :   BPlusTree,
     pub pool            :   BufferPool,
-    pub next_record_id  :   u16,
+    pub next_record_id  :   u32,
 }
 
 impl Index{
     pub fn new(mut db_file: DatabaseFile) -> Result<Self, DbError> {
         let tree = BPlusTree::deserialise(&mut db_file)?;
         let pool = BufferPool::new(POOL_CAPACITY, db_file);
-        let next_record_id: u16 = tree.max_key().map(|k| k + 1).unwrap_or(1);
+        let next_record_id: u32 = tree.max_key().map(|k| k + 1).unwrap_or(1);
         Ok(Self {
             tree,
             pool,
             next_record_id,
         })
     }
-    pub fn get_record(&mut self,record_id : u16,record_buf : &mut [u8;RECORD_SIZE])->Result<usize,DbError>{
+    pub fn get_record(&mut self,record_id : u32,record_buf : &mut [u8;RECORD_SIZE])->Result<usize,DbError>{
         let page_id:u64=self.tree.search(record_id)?;
         let page:&Page=self.pool.get_page(page_id)?;
         page.read_record(record_id,record_buf)
@@ -54,12 +54,12 @@ impl Index{
         self.next_record_id+=1;
         Ok(size)
     }
-    pub fn update_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
+    pub fn update_record(&mut self,record_id:u32,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
         let page_id=self.tree.search(record_id)?;
         let page:&mut Page=self.pool.get_page_mut(page_id)?;
         page.update_record(record_id,buf,size)
     }
-    pub fn delete_record(&mut self,record_id:u16)->Result<(),DbError>{
+    pub fn delete_record(&mut self,record_id:u32)->Result<(),DbError>{
         let page_id=self.tree.search(record_id)?;
         let free_space={
             let page:&mut Page=self.pool.get_page_mut(page_id)?;

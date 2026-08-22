@@ -7,19 +7,19 @@ use crate::db_errors::DbError;
 use crate::crc32::crc32;
 
 pub const RECORD_SIZE : usize =128;
-pub const SLOT_SIZE : usize=6;
+pub const SLOT_SIZE : usize=8;
 
 pub struct Slot{
-    pub id:u16,
+    pub id:u32,
     pub offset:u16,
     pub size:u16,
 }
 
 impl Slot{
     pub fn deserialise(buffer:&[u8;PAGE_SIZE],offset : usize)->Self{
-        let id=u16::from_le_bytes(buffer[offset..offset+2].try_into().unwrap());
-        let off=u16::from_le_bytes(buffer[offset+2..offset+4].try_into().unwrap());
-        let size=u16::from_le_bytes(buffer[offset+4..offset+6].try_into().unwrap());
+        let id=u32::from_le_bytes(buffer[offset..offset+4].try_into().unwrap());
+        let off=u16::from_le_bytes(buffer[offset+4..offset+6].try_into().unwrap());
+        let size=u16::from_le_bytes(buffer[offset+6..offset+8].try_into().unwrap());
         Self{
             id,
             offset:off,
@@ -61,18 +61,10 @@ impl Page{
         file_checksum==calc_checksum
     }
 
-    pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
+    pub fn load(id:u64,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
-        match db_file.read_page(id as u64,&mut buf){
-            Ok(_)=>{},
-            Err(e)=>return Err(e),
-        };
-        let header:PageHeader=match PageHeader::deserialise(&mut buf){
-            Ok(head)=>head,
-            Err(e)=>{
-                return Err(e);
-            },
-        };
+        db_file.read_page(id,&mut buf)?;
+        let header:PageHeader=PageHeader::deserialise(&mut buf)?;
         if matches!(header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
         }
@@ -83,11 +75,11 @@ impl Page{
         let mut offset:u64=PAGE_HEADER_SIZE as u64;
         let mut trash:Vec<u16>=Vec::new();
         while offset<header.lower as u64{
-            let size=u16::from_le_bytes(buf[offset as usize+4..offset as usize+6].try_into().unwrap());
+            let size=u16::from_le_bytes(buf[offset as usize+6..offset as usize+8].try_into().unwrap());
             if size==0{
                 trash.push(offset as u16);
             }
-            offset+=6;
+            offset+=SLOT_SIZE as u64;
         }
         Ok(Self{
             header,
@@ -133,7 +125,7 @@ impl Page{
         page
     }
 
-    pub fn read_record(&self,record_id : u16,buf:&mut [u8;RECORD_SIZE])->Result<usize,DbError>{
+    pub fn read_record(&self,record_id : u32,buf:&mut [u8;RECORD_SIZE])->Result<usize,DbError>{
         if matches!(self.header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
         }
@@ -172,7 +164,7 @@ impl Page{
         Ok(bytes_read)
     }
 
-    pub fn write_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size : usize)->Result<usize,DbError>{
+    pub fn write_record(&mut self,record_id:u32,buf:&[u8;RECORD_SIZE],size : usize)->Result<usize,DbError>{
         if matches!(self.header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
         }
@@ -188,36 +180,36 @@ impl Page{
                 },
             };
             let id_bytes=record_id.to_le_bytes();
-            self.buffer[slot as usize..slot as usize+2].copy_from_slice(&id_bytes);
+            self.buffer[slot as usize..slot as usize+4].copy_from_slice(&id_bytes);
             let size_bytes=(size as u16).to_le_bytes();
-            self.buffer[slot as usize+4..slot as usize+6].copy_from_slice(&size_bytes);
-            let offset:u16=u16::from_le_bytes(self.buffer[slot as usize+2..slot as usize+4].try_into().unwrap());
+            self.buffer[slot as usize+6..slot as usize+8].copy_from_slice(&size_bytes);
+            let offset:u16=u16::from_le_bytes(self.buffer[slot as usize+4..slot as usize+6].try_into().unwrap());
             self.buffer[offset as usize..offset as usize+RECORD_SIZE].copy_from_slice(buf);
             self.header.flags=PageFlags::Dirty;
             return Ok(size)
         }
         let free_space=self.header.upper-self.header.lower;
-        if free_space<SLOT_SIZE as u16+RECORD_SIZE as u16{
+        if (free_space as u32)<SLOT_SIZE as u32+RECORD_SIZE as u32{
             return Err(DbError::SpaceOver);
         }
         self.buffer[self.header.upper as usize-RECORD_SIZE..self.header.upper as usize].copy_from_slice(&buf[0..RECORD_SIZE]);
         self.header.upper-=RECORD_SIZE as u16;
-        let mut slot_bytes=[0u8;6];
+        let mut slot_bytes=[0u8;SLOT_SIZE];
         let offset:usize=self.header.upper as usize;
         let offset_bytes=(offset as u16).to_le_bytes();
         let record_id_bytes=record_id.to_le_bytes();
         let size_bytes=(size as u16).to_le_bytes();  //will stay as size so the user doesn't get nulls
-        slot_bytes[0..2].copy_from_slice(&record_id_bytes);
-        slot_bytes[2..4].copy_from_slice(&offset_bytes);
-        slot_bytes[4..6].copy_from_slice(&size_bytes);
-        self.buffer[self.header.lower as usize..self.header.lower as usize+6].copy_from_slice(&slot_bytes);
+        slot_bytes[0..4].copy_from_slice(&record_id_bytes);
+        slot_bytes[4..6].copy_from_slice(&offset_bytes);
+        slot_bytes[6..8].copy_from_slice(&size_bytes);
+        self.buffer[self.header.lower as usize..self.header.lower as usize+SLOT_SIZE].copy_from_slice(&slot_bytes);
         self.header.item_count+=1;
         self.header.lower+=SLOT_SIZE as u16;
         self.header.flags=PageFlags::Dirty;
         Ok(size)
     }
 
-    pub fn update_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
+    pub fn update_record(&mut self,record_id:u32,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
         if matches!(self.header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
         }
@@ -238,7 +230,7 @@ impl Page{
             Some(s)=>s,
             None=>return Err(DbError::RecordAbsent),
         };
-        let test_id=u16::from_le_bytes(self.buffer[slot.offset as usize..slot.offset as usize+2].try_into().unwrap()); //check if id changed
+        let test_id=u32::from_le_bytes(self.buffer[slot.offset as usize..slot.offset as usize+4].try_into().unwrap()); //check if id changed
         if test_id!=slot.id{
             return Err(DbError::RecordMismatch);
         }
@@ -253,7 +245,7 @@ impl Page{
         Ok(size)
     }
 
-    pub fn delete_record(&mut self,record_id:u16)->Result<(),DbError>{
+    pub fn delete_record(&mut self,record_id:u32)->Result<(),DbError>{
         if matches!(self.header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
         }
@@ -287,7 +279,7 @@ impl Page{
         }
         let new_size:u16=0;
         let zero_bytes=new_size.to_le_bytes();
-        self.buffer[offset+4..offset+6].copy_from_slice(&zero_bytes);
+        self.buffer[offset+6..offset+8].copy_from_slice(&zero_bytes);
         self.header.flags=PageFlags::Dirty;
         Ok(())
     }

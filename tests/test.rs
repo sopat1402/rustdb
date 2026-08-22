@@ -5,16 +5,16 @@ use rustdb::index::Index;
 use rustdb::page::DatabaseFile;
 use rustdb::slotted_page::RECORD_SIZE;
 
-fn make_record(id: u16, text: &[u8]) -> Result<([u8; RECORD_SIZE], usize),DbError> {
+fn make_record(id: u32, text: &[u8]) -> Result<([u8; RECORD_SIZE], usize),DbError> {
     let mut record = [0u8; RECORD_SIZE];
 
-    record[0..2].copy_from_slice(&id.to_le_bytes());
+    record[0..4].copy_from_slice(&id.to_le_bytes());
 
-    let end = 2 + text.len();
+    let end = 4 + text.len();
     if end>RECORD_SIZE {
         return Err(DbError::SpaceOver);
     }
-    record[2..end].copy_from_slice(text);
+    record[4..end].copy_from_slice(text);
 
     Ok((record, end))
 }
@@ -100,7 +100,7 @@ fn test(){
     let mut read_buf=[0u8;RECORD_SIZE];
     match index.get_record(1,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 1 {:?}",&read_buf[2..size]);
+            println!("Got record 1 {:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 1 {:?}",e);
@@ -109,7 +109,7 @@ fn test(){
     read_buf=[0u8;RECORD_SIZE];
     match index.get_record(2,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 2 {:?}",&read_buf[2..size]);
+            println!("Got record 2 {:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 2 {:?}",e);
@@ -118,7 +118,7 @@ fn test(){
     read_buf=[0u8;RECORD_SIZE];
     match index.get_record(3,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 3 {:?}",&read_buf[2..size]);
+            println!("Got record 3 {:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 3 {:?}",e);
@@ -157,7 +157,7 @@ fn test(){
     };
     match index.get_record(1,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 1 after restart{:?}",&read_buf[2..size]);
+            println!("Got record 1 after restart{:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 1 {:?}",e);
@@ -166,7 +166,7 @@ fn test(){
     read_buf=[0u8;RECORD_SIZE];
     match index.get_record(2,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 2 after restart{:?}",&read_buf[2..size]);
+            println!("Got record 2 after restart{:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 2 {:?}",e);
@@ -175,7 +175,7 @@ fn test(){
     read_buf=[0u8;RECORD_SIZE];
     match index.get_record(3,&mut read_buf){
         Ok(size)=>{
-            println!("Got record 3 after restart{:?}",&read_buf[2..size]);
+            println!("Got record 3 after restart{:?}",&read_buf[4..size]);
         },
         Err(e)=>{
             println!("Failed to get record 3 {:?}",e);

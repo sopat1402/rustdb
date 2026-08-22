@@ -14,13 +14,13 @@ const NODE_TAG_LEAF: u8 = 1;
 const NODE_TAG_TRASHED: u8 = 2; // occupies a slot in `nodes` but holds no live data
 
 pub struct Entry {
-    pub record_id: u16,
+    pub record_id: u32,
     pub page_id: u64,
 }
 
 pub enum Node {
     Internal {
-        keys: Vec<u16>,
+        keys: Vec<u32>,
         children: Vec<usize>,
     },
     Leaf {
@@ -46,7 +46,7 @@ impl BPlusTree {
         Self { root, nodes, trash, m }
     }
 
-    pub fn search(&self, record_id: u16) -> Result<u64, DbError> {
+    pub fn search(&self, record_id: u32) -> Result<u64, DbError> {
         let mut curr: usize = self.root;
         loop {
             match &self.nodes[curr] {
@@ -78,7 +78,7 @@ impl BPlusTree {
         }
     }
 
-    pub fn insert(&mut self, record_id: u16, page_id: u64) -> Result<(), DbError> {
+    pub fn insert(&mut self, record_id: u32, page_id: u64) -> Result<(), DbError> {
         if let Some((sep, right_id)) = self.insert_recursive(self.root, record_id, page_id)? {
             let new_root = Node::Internal {
                 keys: vec![sep],
@@ -93,9 +93,9 @@ impl BPlusTree {
     fn insert_recursive(
         &mut self,
         node_id: usize,
-        record_id: u16,
+        record_id: u32,
         page_id: u64,
-    ) -> Result<Option<(u16, usize)>, DbError> {
+    ) -> Result<Option<(u32, usize)>, DbError> {
         let is_leaf = matches!(self.nodes[node_id], Node::Leaf { .. });
         if is_leaf {
             return self.insert_into_leaf(node_id, record_id, page_id);
@@ -119,9 +119,9 @@ impl BPlusTree {
     fn insert_into_leaf(
         &mut self,
         leaf_id: usize,
-        record_id: u16,
+        record_id: u32,
         page_id: u64,
-    ) -> Result<Option<(u16, usize)>, DbError> {
+    ) -> Result<Option<(u32, usize)>, DbError> {
         {
             let Node::Leaf { entries, .. } = &mut self.nodes[leaf_id] else { unreachable!() };
             match entries.binary_search_by_key(&record_id, |e| e.record_id) {
@@ -142,7 +142,7 @@ impl BPlusTree {
         }
     }
 
-    fn split_leaf(&mut self, leaf_id: usize) -> (u16, usize) {
+    fn split_leaf(&mut self, leaf_id: usize) -> (u32, usize) {
         let (right_entries, old_next) = {
             let Node::Leaf { entries, next } = &mut self.nodes[leaf_id] else { unreachable!() };
             let mid = entries.len() / 2;
@@ -163,9 +163,9 @@ impl BPlusTree {
         &mut self,
         node_id: usize,
         idx: usize,
-        sep: u16,
+        sep: u32,
         new_child_id: usize,
-    ) -> Result<Option<(u16, usize)>, DbError> {
+    ) -> Result<Option<(u32, usize)>, DbError> {
         {
             let Node::Internal { keys, children } = &mut self.nodes[node_id] else { unreachable!() };
             keys.insert(idx, sep);
@@ -184,7 +184,7 @@ impl BPlusTree {
         }
     }
 
-    fn split_internal(&mut self, node_id: usize) -> (u16, usize) {
+    fn split_internal(&mut self, node_id: usize) -> (u32, usize) {
         let (mid_key, right_keys, right_children) = {
             let Node::Internal { keys, children } = &mut self.nodes[node_id] else { unreachable!() };
             let mid = keys.len() / 2;
@@ -200,7 +200,7 @@ impl BPlusTree {
         (mid_key, new_id)
     }
 
-    pub fn delete(&mut self, record_id: u16) -> Result<(), DbError> {
+    pub fn delete(&mut self, record_id: u32) -> Result<(), DbError> {
         let mut path: Vec<(usize, usize)> = Vec::new(); // (node_id, child_idx taken)
         let mut curr = self.root;
 
@@ -456,7 +456,7 @@ impl BPlusTree {
         };
         Ok(())
     }
-    pub fn max_key(&self) -> Option<u16> {
+    pub fn max_key(&self) -> Option<u32> {
         let mut curr = self.root;
         loop {
             match &self.nodes[curr] {
@@ -504,9 +504,9 @@ impl BPlusTree {
             let node = match tag {
                 NODE_TAG_INTERNAL => {
                     let keys_len = read_u64(&buf, &mut pos)?;
-                    let mut keys: Vec<u16> = Vec::with_capacity(keys_len as usize);
+                    let mut keys: Vec<u32> = Vec::with_capacity(keys_len as usize);
                     for _ in 0..keys_len {
-                        keys.push(read_u16(&buf, &mut pos)?);
+                        keys.push(read_u32(&buf, &mut pos)?);
                     }
                     let children_len = read_u64(&buf, &mut pos)?;
                     let mut children: Vec<usize> = Vec::with_capacity(children_len as usize);
@@ -519,7 +519,7 @@ impl BPlusTree {
                     let entries_len = read_u64(&buf, &mut pos)?;
                     let mut entries: Vec<Entry> = Vec::with_capacity(entries_len as usize);
                     for _ in 0..entries_len {
-                        let record_id = read_u16(&buf, &mut pos)?;
+                        let record_id = read_u32(&buf, &mut pos)?;
                         let page_id = read_u64(&buf, &mut pos)?;
                         entries.push(Entry { record_id, page_id });
                     }
@@ -550,12 +550,21 @@ fn read_u8(buf: &[u8], pos: &mut usize) -> Result<u8, DbError> {
     Ok(v)
 }
 
-fn read_u16(buf: &[u8], pos: &mut usize) -> Result<u16, DbError> {
+/*fn read_u16(buf: &[u8], pos: &mut usize) -> Result<u16, DbError> {
     if *pos + 2 > buf.len() {
         return Err(DbError::CorruptedDataError);
     }
     let v = u16::from_le_bytes(buf[*pos..*pos + 2].try_into().unwrap());
     *pos += 2;
+    Ok(v)
+}*/
+
+fn read_u32(buf: &[u8], pos: &mut usize) -> Result<u32, DbError> {
+    if *pos + 4 > buf.len() {
+        return Err(DbError::CorruptedDataError);
+    }
+    let v = u32::from_le_bytes(buf[*pos..*pos + 4].try_into().unwrap());
+    *pos += 4;
     Ok(v)
 }
 

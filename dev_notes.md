@@ -29,8 +29,8 @@ flags come into picture for the actual bytes in the page.
 
 made an error module with a big enum in it and use that everywhere so that it has all types.
 
-- CHANGE RECORD ID FROM U16 TO U32 => This is a later todo. Requires quite the refactor, especially with byte serialisation
-and deserialisation.
+- CHANGE RECORD ID FROM U16 TO U32 => This is a major todo. Requires quite the refactor, 
+    especially with byte serialisation and deserialisation.
 
 - For now, the database can have a maximum of 65,536 records.
 
@@ -113,30 +113,20 @@ match means a file I/O error while loading the page or while flushing it earlier
 k I wrote my own crc32 checksum function and then added checksum test on load and compute a checksum when returning
 a new page.
 
-# Massive milestone: Persistent indexing test passed
+WAL will be a part of Index. WAL file will have the first 8 bytes as the last lsn which is updated on flushes.
+That's so that reconstruction knows what the last LSN was since on graceful shutdown, WAL is to be emptied (except
+for the 8 byte metadata). If there is still content, then that means there was a crash. A WAL entry will have lsn u64,
+task type u16, record id u32, page id u16, data [u8;RECORD_SIZE]. they can be null like in the case of delete, data will
+be a null buffer and really, it won't even be checked. page id must be found prior to fsync into the WAL. Reason being,
+when clearing the WAL on a checkpoint, I need to know what page each task corresponds to. Also, when an old page is
+loaded with a lower LSN, the WAL will be checked if any of the tasks actually correspond to the LSN stored in the page
+header. testing the WAL will be hard. I'd need to figure out how to make the database crash in a test because I've
+made it pretty secure. The WAL is in the index, so I just need to call index.execute for a task. There do need to
+be checkpoint checks for the number of WAL entries. When it reaches the CHECKPOINT_MAX, start clearing the WAL and
+making pages mentioned catch up and update their LSN to the last one. Same for the shutdown. Prior to dropping the
+index, the WAL must be cleared like that. 
 
-
-=== PERSISTENT INDEXING TEST ===
-write record 1: hello
-write record 2: world
-write record 3: database
-get record 1: hello
-get record 2: world
-get record 3: database
-update record 2: updated
-get updated record 2: updated
-delete record 2: OK
-get deleted record 2: correctly returned RecordAbsent
-write record 4 after deletion: OK
-get record 4: new record
-flushed buffer pool
-serialised B+ tree
-dropped entire index
-record 1 survived restart: hello
-deleted record 2 remained deleted after restart
-record 3 survived restart: database
-record 4 survived restart: new record
-write record 5 after restart: OK
-record 5 written successfully after restart
-
-=== PERSISTENT INDEXING TEST PASSED ===
+I must first change record_id to u32. LOL record size u16 allows 65535 records. 
+65535*134=8781690 bytes. That's 8.8 megabytes. SMH. Imagine a fucking 8.8Mb database. 
+I defo need u32. 4,294,967,295 records comes to max 575.5 GB. K I did it. Even removed matches that weren't
+needed. could have just used a question mark in some places to propagate the error up.
