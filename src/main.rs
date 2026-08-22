@@ -207,7 +207,7 @@ fn main() {
             return;
         }
     }
-    match index.pool.flush_all() {
+    match index.pool.evict_all() {
         Ok(()) => println!("flushed buffer pool"),
         Err(e) => {
             eprintln!("failed to flush buffer pool: {:?}", e);

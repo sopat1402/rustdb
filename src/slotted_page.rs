@@ -1,11 +1,8 @@
 //Code by Sohum Pathak
 //sohum.pathak@protonmail.com
-use crate::page::PageHeader;
-use crate::page::PAGE_SIZE;
+use crate::page::{PageFlags,PageHeader,DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
 use std::vec::Vec;
-use crate::page::DatabaseFile;
 use crate::db_errors::DbError;
-use crate::page::PAGE_HEADER_SIZE;
 
 pub const RECORD_SIZE : usize =128;
 pub const SLOT_SIZE : usize=6;
@@ -37,11 +34,19 @@ pub struct Page{
 
 impl Page{
     pub fn has_space(&self)->bool{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return false;
+        }
         (self.header.upper-self.header.lower)>=(RECORD_SIZE as u16+SLOT_SIZE as u16)
     }
+
     pub fn free_space(&self)->u16{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return 0;
+        }
         self.header.upper-self.header.lower
     }
+
     pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
         match db_file.read_page(id as u64,&mut buf){
@@ -50,8 +55,13 @@ impl Page{
         };
         let header:PageHeader=match PageHeader::deserialise(&mut buf){
             Ok(head)=>head,
-            Err(_)=>return Err(DbError::CorruptedDataError),
+            Err(e)=>{
+                return Err(e);
+            },
         };
+        if matches!(header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
         let mut offset:u64=PAGE_HEADER_SIZE as u64;
         let mut trash:Vec<u16>=Vec::new();
         while offset<header.lower as u64{
@@ -67,11 +77,26 @@ impl Page{
             trash:trash,
         })
     }
+
     pub fn flush(&mut self,db_file : &DatabaseFile)->Result<(),DbError>{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
+        if matches!(self.header.flags,PageFlags::Clean){
+            return Ok(());
+        }
+        self.header.flags=PageFlags::Clean;
         self.header.serialise(&mut self.buffer);
-        db_file.write_page(self.header.page_id,&self.buffer)?;
+        match db_file.write_page(self.header.page_id,&self.buffer){
+            Ok(_)=>{},
+            Err(e)=>{
+                self.header.flags=PageFlags::Dirty;
+                return Err(e);
+            }
+        };
         Ok(())
     }
+
     pub fn new(head : PageHeader,buf : [u8;PAGE_SIZE])->Self{
         let trash:Vec<u16>=Vec::new();
         Self{
@@ -80,7 +105,11 @@ impl Page{
             trash,
         }
     }
+
     pub fn read_record(&self,record_id : u16,buf:&mut [u8;RECORD_SIZE])->Result<usize,DbError>{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
         let mut offset:usize=PAGE_HEADER_SIZE;
         let mut slot : Option<Slot>=None;
         for _ in 0..self.header.item_count{
@@ -117,13 +146,19 @@ impl Page{
     }
 
     pub fn write_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size : usize)->Result<usize,DbError>{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
         if size>RECORD_SIZE{
             return Err(DbError::SpaceOver);
         }
         if !self.trash.is_empty(){
             let slot:u16=match self.trash.pop(){
                 Some(o)=>o,
-                None=>return Err(DbError::CorruptedDataError),
+                None=>{
+                    self.header.flags=PageFlags::Corrupted;
+                    return Err(DbError::CorruptedDataError);
+                },
             };
             let id_bytes=record_id.to_le_bytes();
             self.buffer[slot as usize..slot as usize+2].copy_from_slice(&id_bytes);
@@ -131,6 +166,7 @@ impl Page{
             self.buffer[slot as usize+4..slot as usize+6].copy_from_slice(&size_bytes);
             let offset:u16=u16::from_le_bytes(self.buffer[slot as usize+2..slot as usize+4].try_into().unwrap());
             self.buffer[offset as usize..offset as usize+RECORD_SIZE].copy_from_slice(buf);
+            self.header.flags=PageFlags::Dirty;
             return Ok(size)
         }
         let free_space=self.header.upper-self.header.lower;
@@ -150,10 +186,14 @@ impl Page{
         self.buffer[self.header.lower as usize..self.header.lower as usize+6].copy_from_slice(&slot_bytes);
         self.header.item_count+=1;
         self.header.lower+=SLOT_SIZE as u16;
+        self.header.flags=PageFlags::Dirty;
         Ok(size)
     }
 
     pub fn update_record(&mut self,record_id:u16,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
         if size>RECORD_SIZE{
             return Err(DbError::SpaceOver);
         }
@@ -182,10 +222,14 @@ impl Page{
         self.buffer[slot.offset as usize..slot.offset as usize+RECORD_SIZE].copy_from_slice(&buf[0..RECORD_SIZE]);
         let size_bites=(size as u16).to_le_bytes();
         self.buffer[offset+4..offset+6].copy_from_slice(&size_bites);
+        self.header.flags=PageFlags::Dirty;
         Ok(size)
     }
 
     pub fn delete_record(&mut self,record_id:u16)->Result<(),DbError>{
+        if matches!(self.header.flags,PageFlags::Corrupted){
+            return Err(DbError::PageCorrupted);
+        }
         let mut offset:usize=PAGE_HEADER_SIZE;
         let mut slot : Option<Slot>=None;
         for _ in 0..self.header.item_count{
@@ -203,17 +247,21 @@ impl Page{
         self.trash.push(offset as u16);
         let bytes_read=slot.size as usize;
         if bytes_read>RECORD_SIZE{
+            self.header.flags=PageFlags::Corrupted;
             return Err(DbError::CorruptedDataError);
         }
         if slot.offset as usize>=PAGE_SIZE{
+            self.header.flags=PageFlags::Corrupted;
             return Err(DbError::CorruptedDataError);
         }
         if slot.offset<self.header.upper{
+            self.header.flags=PageFlags::Corrupted;
             return Err(DbError::CorruptedDataError);
         }
         let new_size:u16=0;
         let zero_bytes=new_size.to_le_bytes();
         self.buffer[offset+4..offset+6].copy_from_slice(&zero_bytes);
+        self.header.flags=PageFlags::Dirty;
         Ok(())
     }
 }

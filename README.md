@@ -1,5 +1,31 @@
+# Page design
+
 Paging has various flags, bring to 96 bytes. currently just using page id
 need to use dirty flag now that flush is done
+
+There's a page flags enum with clean, dirty and corrupted. it should be checked on page access.
+The things in the page header are : 
+pub struct PageHeader{
+    pub magic       :   u32,    //To ensure it is of this table
+    pub page_id     :   u64,    //Page ID
+    pub page_type   :   PageType,    //Meta data, data, free, etc
+    pub flags       :   u16,    //corrupted, dirty, clean
+    pub lsn         :   u64,    //LSN for the Write Ahead Logs
+    pub checksum    :   u32,    //To deal with corruption
+    pub item_count  :   u16,    //For slotted pages
+    pub lower       :   u16,    //End of slot list -> it grows downwards
+    pub upper       :   u16,    //Upper point of the records -> they grow upwards
+    pub reserved    :   [u8;62],
+}
+This makes 96 bytes. The reserved bytes are just for metadata and checksums in case another module
+needs them to store metadata.
+
+Page flag is set to clean prior to disk write. Flush and operations refused if flag is corrupted.
+If the page flag is clean, flush will just return Ok(()). Operations change page flag to dirty.
+Corrupted data errors change page flag to corrupted. The errors from deserialise in the impl of PageHeader return
+corrupted errors and mismatch errors for magic and the page type and page flags. That's the bouncer ig so corrupted 
+flags come into picture for the actual bytes in the page.
+
 
 made an error module with a big enum in it and use that everywhere so that it has all types.
 
@@ -19,6 +45,9 @@ flag usage yet even though page header includes it.
 buffer pool hides APIs for page stuff so that other components need only worry about getting the page and
 not whether it is from RAM or ROM. it caches it right after. there's get mut and regular get. that's because
 of rust's ownership mechanism, which has been a bit of a nuisance so far for a single threaded project.
+
+Added flush_all and flush_page along and renamed the old ones to evict. Now the cache can be flushed without being
+deconstructed.
 
 OMGGG I just realised I totally forgot about Box<T>. Eh maybe it was for the best. I did make a pretty cool arena
 and trash solution to sidestep pointers altogether.
@@ -75,11 +104,30 @@ K so get free page will now search the page metadata too. Upto db_file.size*10/P
 10 byte increment. 10 bytes is u64 page id and u16 free space<=8096 bytes. I should probably start using all the
 constants I defined and make slot size as 6 bytes a magic constant thing for now.
 
-# What I learned
+# Massive milestone: Persistent indexing test passed
 
-- Byte handling
-- Persistence
-- Ownership
-- Corruption tests
-- Error handling
-- I might be a masochist
+
+=== PERSISTENT INDEXING TEST ===
+write record 1: hello
+write record 2: world
+write record 3: database
+get record 1: hello
+get record 2: world
+get record 3: database
+update record 2: updated
+get updated record 2: updated
+delete record 2: OK
+get deleted record 2: correctly returned RecordAbsent
+write record 4 after deletion: OK
+get record 4: new record
+flushed buffer pool
+serialised B+ tree
+dropped entire index
+record 1 survived restart: hello
+deleted record 2 remained deleted after restart
+record 3 survived restart: database
+record 4 survived restart: new record
+write record 5 after restart: OK
+record 5 written successfully after restart
+
+=== PERSISTENT INDEXING TEST PASSED ===

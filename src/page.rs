@@ -11,9 +11,14 @@ pub const PAGE_HEADER_SIZE:usize=96;
 pub enum PageType{
     Free = 0,
     Data = 1,
-    BTreeLeaf=2,
-    BtreeInternal=3,
-    Meta=4,
+    Meta = 2,
+}
+
+#[repr(u16)]
+pub enum PageFlags{
+    Clean           =   0,
+    Dirty           =   1,
+    Corrupted       =   2,
 }
 
 pub struct DatabaseFile{
@@ -72,11 +77,11 @@ impl DatabaseFile{
 }
 
 pub struct PageHeader{
-    pub magic       :   u32,    //To ensure it is of this table and not corrupted
+    pub magic       :   u32,    //To ensure it is of this table
     pub page_id     :   u64,    //Page ID
-    pub page_type   :   PageType,    //Meta data, B tree internals, etc
-    pub flags       :   u16,    //Unused for now, stuff like corrupted, dirty
-    pub lsn         :   u64,    //This comes with Write Ahead Logs
+    pub page_type   :   PageType,    //Meta data, data, free, etc
+    pub flags       :   PageFlags,    //corrupted, dirty, clean
+    pub lsn         :   u64,    //LSN for the Write Ahead Logs
     pub checksum    :   u32,    //To deal with corruption
     pub item_count  :   u16,    //For slotted pages
     pub lower       :   u16,    //End of slot list -> it grows downwards
@@ -90,7 +95,7 @@ impl PageHeader {
             magic: MAGIC,
             page_id,
             page_type: page_type,
-            flags: 0,
+            flags: PageFlags::Clean,
             lsn: 0,
             checksum: 0,
             item_count: 0,
@@ -113,15 +118,18 @@ impl PageHeader {
         let typ:u16=match self.page_type{
             PageType::Free=>0,
             PageType::Data=>1,
-            PageType::BTreeLeaf=>2,
-            PageType::BtreeInternal=>3,
-            PageType::Meta=>4,
+            PageType::Meta=>2,
         };
         let page_type_bytes=typ.to_le_bytes();
         buffer[header_offset..header_offset+2].copy_from_slice(&page_type_bytes);
         header_offset+=2;
 
-        let flags_bytes=self.flags.to_le_bytes();
+        let flag:u16=match self.flags{
+            PageFlags::Clean=>0,
+            PageFlags::Dirty=>1,
+            PageFlags::Corrupted=>2,
+        };
+        let flags_bytes=flag.to_le_bytes();
         buffer[header_offset..header_offset+2].copy_from_slice(&flags_bytes);
         header_offset+=2;
 
@@ -150,18 +158,21 @@ impl PageHeader {
     pub fn deserialise(buffer:&mut [u8;PAGE_SIZE])->Result<Self,DbError>{
         let magic=u32::from_le_bytes(buffer[0..4].try_into().unwrap());
         if magic!=MAGIC{
-            return Err(DbError::CorruptedDataError);
+            return Err(DbError::MagicMismatch);
         }
         let page_id=u64::from_le_bytes(buffer[4..12].try_into().unwrap());
         let page_type=match u16::from_le_bytes(buffer[12..14].try_into().unwrap()){
             0=>PageType::Free,
             1=>PageType::Data,
-            2=>PageType::BTreeLeaf,
-            3=>PageType::BtreeInternal,
-            4=>PageType::Meta,
-            _=>return Err(DbError::CorruptedDataError),
+            2=>PageType::Meta,
+            _=>return Err(DbError::PageTypeMismatch),
         };
-        let flags=u16::from_le_bytes(buffer[14..16].try_into().unwrap());
+        let flags:PageFlags=match u16::from_le_bytes(buffer[14..16].try_into().unwrap()){
+            0=>PageFlags::Clean,
+            1=>PageFlags::Dirty,
+            2=>PageFlags::Corrupted,
+            _=>return Err(DbError::PageFlagMismatch),
+        };
         let lsn=u64::from_le_bytes(buffer[16..24].try_into().unwrap());
         let checksum=u32::from_le_bytes(buffer[24..28].try_into().unwrap());
         let item_count=u16::from_le_bytes(buffer[28..30].try_into().unwrap());

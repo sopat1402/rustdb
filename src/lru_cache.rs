@@ -7,8 +7,8 @@ use crate::page::{DatabaseFile};
 use crate::db_errors::DbError;
 
 pub struct DLLNode{
-    prev : Option<usize>,
-    next : Option<usize>,
+    pub prev : Option<usize>,
+    pub next : Option<usize>,
     pub page : Page,
 }
 
@@ -277,7 +277,7 @@ impl DLL{
         let x=&mut self.nodes[tail];
         match x.page.flush(db_file){
             Ok(())=>{},
-            Err(_)=>return Err(DbError::CorruptedDataError),
+            Err(e)=>return Err(e),
         };
         self.trash.push(tail);
         Ok(tail)

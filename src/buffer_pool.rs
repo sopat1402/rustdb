@@ -20,15 +20,25 @@ impl BufferPool{
         }
     }
     pub fn find_free_page(&self)->Result<u64,DbError>{
-        for i in 0..self.lru.dll.nodes.len(){
-            let node:&DLLNode=&self.lru.dll.nodes[i];
+        let mut curr=0;
+        let mut search_needed=true;
+        match self.lru.dll.head{
+            Some(idx)=>curr=idx,
+            None=>search_needed=false,
+        }
+        while search_needed{
+            let node:&DLLNode=&self.lru.dll.nodes[curr];
             if node.page.has_space(){
                 return Ok(node.page.header.page_id);
             }
+            match node.next{
+                Some(idx)=>curr=idx,
+                None=>search_needed=false,
+            };
         }
         let mut offset:u64=0;
         let mut buf=[0u8;10];
-        while offset+10<=self.db_file.size{
+        while offset+10<=(self.db_file.size/PAGE_SIZE as u64)*10{
             match self.db_file.page_metadata.read_at(&mut buf,offset){
                 Ok(_)=>{},
                 Err(_)=>return Err(DbError::FileError),
@@ -48,17 +58,17 @@ impl BufferPool{
             Err(_) => {
                 let page = match Page::load(page_id as u16, &self.db_file) {
                     Ok(p) => p,
-                    Err(_) => return Err(DbError::RecordAbsent),
+                    Err(e) => return Err(e),
                 };
 
                 match self.lru.set_new(page, &self.db_file) {
                     Ok(_) => {}
-                    Err(_) => return Err(DbError::RecordMismatch),
+                    Err(e) => return Err(e),
                 };
 
                 match self.lru.dll.head {
                     Some(h) => h,
-                    None => return Err(DbError::RecordMismatch),
+                    None => return Err(DbError::RecordAbsent),
                 }
             }
         };
@@ -71,29 +81,29 @@ impl BufferPool{
             Err(_) => {
                 let page = match Page::load(page_id as u16, &self.db_file) {
                     Ok(p) => p,
-                    Err(_) => return Err(DbError::RecordAbsent),
+                    Err(e) => return Err(e),
                 };
 
                 match self.lru.set_new(page, &self.db_file) {
                     Ok(_) => {}
-                    Err(_) => return Err(DbError::RecordMismatch),
+                    Err(e) => return Err(e),
                 };
 
                 match self.lru.dll.head {
                     Some(h) => h,
-                    None => return Err(DbError::RecordMismatch),
+                    None => return Err(DbError::RecordAbsent),
                 }
             }
         };
 
         Ok(&mut self.lru.dll.nodes[idx].page)
     }
-    pub fn flush_all(&mut self)->Result<(),DbError>{
+    pub fn evict_all(&mut self)->Result<(),DbError>{
         let n=self.lru.dll.nodes.len();
         while self.lru.dll.trash.len()!=n{
-            let x=match self.lru.dll.pop_tail(&self.db_file){
+            let x=match self.lru.dll.pop_tail(&self.db_file){ //flush is done inside here
                 Ok(val)=>val,
-                Err(_)=>return Err(DbError::CorruptedDataError),
+                Err(e)=>return Err(e),
             };
             let x=self.lru.dll.nodes[x].page.header.page_id;
             self.lru.map.remove(&x);
@@ -107,19 +117,48 @@ impl BufferPool{
         };
         Ok(x)
     }
-    pub fn flush_page(&mut self,page_id:u64)->Result<(),DbError>{
+    pub fn evict_page(&mut self,page_id:u64)->Result<(),DbError>{
         let node=match self.lru.get_mut(page_id){
             Ok(v)=>v,
-            Err(_)=>return Err(DbError::PageAbsent),
+            Err(e)=>return Err(e),
         };
         match node.page.flush(&mut self.db_file){
             Ok(_)=>{},
-            Err(_)=>return Err(DbError::RecordMismatch),
+            Err(e)=>return Err(e),
         };
         match self.lru.delete(page_id){
             Ok(_)=>{},
-            Err(_)=>return Err(DbError::RecordMismatch),
+            Err(e)=>return Err(e),
         };
+        Ok(())
+    }
+
+    pub fn flush_page(&mut self,page_id:u64)->Result<(),DbError>{
+        let node=match self.lru.get_mut(page_id){
+            Ok(v)=>v,
+            Err(e)=>return Err(e),
+        };
+        match node.page.flush(&mut self.db_file){
+            Ok(_)=>{},
+            Err(e)=>return Err(e),
+        };
+        Ok(())
+    }
+
+    pub fn flush_all(&mut self)->Result<(),DbError>{
+        let mut curr=match self.lru.dll.head{
+            Some(idx)=>idx,
+            None=>return Ok(()), //lru was empty
+        };
+        loop{
+            self.lru.dll.nodes[curr].page.flush(&self.db_file)?;
+            match self.lru.dll.nodes[curr].next{
+                Some(idx)=>{
+                    curr=idx;
+                },
+                None=>break,
+            };
+        }
         Ok(())
     }
 }
