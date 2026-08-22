@@ -70,7 +70,7 @@ The amount of bookkeeping here nearly drove me mad, even though I referred to a 
 spare yourself the trouble and just copy my B+ tree methods except for the byte handling ones to construct and deconstruct the B+ tree from bytes.
 
 serialising and deserialising the tree nearly drove me mad too. I had to study using some different APIs for it and
-it was quite hard. had to even ask a guy for reading material and I'm not even a CSE student!!
+it was quite hard. had to even ask a guy for reading material and I'm not even his acquaintance I just walked up!!
 
 # Index
 
@@ -103,6 +103,15 @@ This solves page fragmentation.
 K so get free page will now search the page metadata too. Upto db_file.size*10/PAGE_SIZE=>number of bytes
 10 byte increment. 10 bytes is u64 page id and u16 free space<=8096 bytes. I should probably start using all the
 constants I defined and make slot size as 6 bytes a magic constant thing for now.
+
+When there is a page corrupted error, it means the header is fucked or a byte flipped. 
+How can replaying a log fixed that. CorruptedDataError maybe. 
+But even then, the log file is being emptied regularly so then just when the log is being emptied, if a flush gives corrupted then rebuild the page. 
+see, since the page did in fact load, it means it got corrupted in the time from the last flush to now. which will be stored in the wal. But a PageCorrupted error for the magic, type and flags can't be remedied. And a checksum that doesn't 
+match means a file I/O error while loading the page or while flushing it earlier. That can't be fixed by just replaying a WAL so I'll do checksum before the WAL.
+
+k I wrote my own crc32 checksum function and then added checksum test on load and compute a checksum when returning
+a new page.
 
 # Massive milestone: Persistent indexing test passed
 

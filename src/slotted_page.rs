@@ -1,8 +1,10 @@
 //Code by Sohum Pathak
 //sohum.pathak@protonmail.com
+
 use crate::page::{PageFlags,PageHeader,DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
 use std::vec::Vec;
 use crate::db_errors::DbError;
+use crate::crc32::crc32;
 
 pub const RECORD_SIZE : usize =128;
 pub const SLOT_SIZE : usize=6;
@@ -47,6 +49,18 @@ impl Page{
         self.header.upper-self.header.lower
     }
 
+    fn check_checksum(buf : &mut [u8;PAGE_SIZE])->bool{
+        //checksum is bytes 24 to 32
+        let file_checksum=u32::from_le_bytes(buf[24..32].try_into().unwrap());
+        let x:u32=0;
+        let x_bytes:[u8;4]=x.to_le_bytes();
+        buf[24..32].copy_from_slice(&x_bytes);
+        let calc_checksum:u32=crc32(buf);
+        let f_chk_bytes=file_checksum.to_le_bytes();
+        buf[24..32].copy_from_slice(&f_chk_bytes);
+        file_checksum==calc_checksum
+    }
+
     pub fn load(id:u16,db_file : &DatabaseFile)->Result<Self,DbError>{
         let mut buf=[0u8;PAGE_SIZE];
         match db_file.read_page(id as u64,&mut buf){
@@ -61,6 +75,10 @@ impl Page{
         };
         if matches!(header.flags,PageFlags::Corrupted){
             return Err(DbError::PageCorrupted);
+        }
+        let checksum_correct:bool=Page::check_checksum(&mut buf);
+        if !checksum_correct{
+            return Err(DbError::ChecksumMismatch);
         }
         let mut offset:u64=PAGE_HEADER_SIZE as u64;
         let mut trash:Vec<u16>=Vec::new();
@@ -99,11 +117,16 @@ impl Page{
 
     pub fn new(head : PageHeader,buf : [u8;PAGE_SIZE])->Self{
         let trash:Vec<u16>=Vec::new();
-        Self{
+        let chks:u32=crc32(&buf);
+        let mut page=Self{
             header : head,
             buffer : buf,
             trash,
-        }
+        };
+        page.header.checksum=chks;
+        let chks_bytes=chks.to_le_bytes();
+        page.buffer[24..32].copy_from_slice(&chks_bytes);
+        page
     }
 
     pub fn read_record(&self,record_id : u16,buf:&mut [u8;RECORD_SIZE])->Result<usize,DbError>{

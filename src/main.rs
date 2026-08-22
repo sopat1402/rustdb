@@ -1,6 +1,7 @@
 //Code by Sohum Pathak
 //sohum.pathak@protonmail.com
 
+mod crc32;
 mod index;
 mod db_errors;
 mod b_plus_tree;

@@ -12,6 +12,16 @@ impl fmt::Display for CorruptedDataError {
 }
 impl std::error::Error for CorruptedDataError {}
 
+//stored checksum doesn't match the calculated one
+#[derive(Debug)]
+pub struct ChecksumMismatch;
+impl fmt::Display for ChecksumMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Checksum mismatch")
+    }
+}
+impl std::error::Error for ChecksumMismatch {}
+
 //Record found with the same key
 #[derive(Debug)]
 pub struct DuplicateKey;
@@ -125,4 +135,5 @@ pub enum DbError{
     PageFlagMismatch,
     PageCorrupted,
     MagicMismatch,
+    ChecksumMismatch,
 }
