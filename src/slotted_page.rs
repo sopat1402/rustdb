@@ -6,7 +6,7 @@ use std::vec::Vec;
 use crate::db_errors::DbError;
 use crate::crc32::crc32;
 
-pub const RECORD_SIZE : usize =128;
+pub const RECORD_SIZE : usize =256;
 pub const SLOT_SIZE : usize=8;
 
 pub struct Slot{

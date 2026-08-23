@@ -130,3 +130,9 @@ I must first change record_id to u32. LOL record size u16 allows 65535 records.
 65535*134=8781690 bytes. That's 8.8 megabytes. SMH. Imagine a fucking 8.8Mb database. 
 I defo need u32. 4,294,967,295 records comes to max 575.5 GB. K I did it. Even removed matches that weren't
 needed. could have just used a question mark in some places to propagate the error up.
+
+Changed RECORD_SIZE to 256 bytes. Allows for more data. Ig since fixed size records are being used, I have to 
+min max between space wastage due to internal fragmentation and available space to write a record. I cannot do
+variable sized records yet as that is quite a deep rabbit hole with defragmentation and I want to first make a
+functioning database and database management system. When I do want variable sized records, I just need to edit slotted
+page.

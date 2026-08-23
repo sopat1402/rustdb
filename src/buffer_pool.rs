@@ -85,7 +85,8 @@ impl BufferPool{
     pub fn evict_all(&mut self)->Result<(),DbError>{
         let n=self.lru.dll.nodes.len();
         while self.lru.dll.trash.len()!=n{
-            let x=self.lru.dll.pop_tail(&self.db_file)?;
+            let x=self.lru.dll.pop_tail(&self.db_file)?; //if a corrupted error is recieved, use the
+            //WAL
             let x=self.lru.dll.nodes[x].page.header.page_id;
             self.lru.map.remove(&x);
         }
@@ -96,14 +97,14 @@ impl BufferPool{
     }
     pub fn evict_page(&mut self,page_id:u64)->Result<(),DbError>{
         let node=self.lru.get_mut(page_id)?;
-        node.page.flush(&mut self.db_file)?;
+        node.page.flush(&mut self.db_file)?; //use the WAL for corrupted page
         self.lru.delete(page_id)?;
         Ok(())
     }
 
     pub fn flush_page(&mut self,page_id:u64)->Result<(),DbError>{
         let node=self.lru.get_mut(page_id)?;
-        node.page.flush(&mut self.db_file)?;
+        node.page.flush(&mut self.db_file)?; //use WAL if error
         Ok(())
     }
 
@@ -113,7 +114,7 @@ impl BufferPool{
             None=>return Ok(()), //lru was empty
         };
         loop{
-            self.lru.dll.nodes[curr].page.flush(&self.db_file)?;
+            self.lru.dll.nodes[curr].page.flush(&self.db_file)?; //use WAL and retry if error.
             match self.lru.dll.nodes[curr].next{
                 Some(idx)=>{
                     curr=idx;
