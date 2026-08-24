@@ -1,7 +1,7 @@
 //Code by Sohum Pathak
 //sohum.pathak@protonmail.com
 
-use crate::slotted_page::{Page,RECORD_SIZE,SLOT_SIZE};
+use crate::slotted_page::{Page,SLOT_SIZE};
 use crate::page::{DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
 use crate::db_errors::DbError;
 use crate::lru_cache::{LRUCache,DLLNode};
@@ -20,7 +20,7 @@ impl BufferPool{
             db_file,
         }
     }
-    pub fn find_free_page(&self)->Result<u64,DbError>{
+    pub fn find_free_page(&self,size:usize)->Result<u64,DbError>{
         let mut curr=0;
         let mut search_needed=true;
         match self.lru.dll.head{
@@ -29,7 +29,7 @@ impl BufferPool{
         }
         while search_needed{
             let node:&DLLNode=&self.lru.dll.nodes[curr];
-            if node.page.has_space(){
+            if node.page.has_space(size){
                 return Ok(node.page.header.page_id);
             }
             match node.next{
@@ -45,8 +45,8 @@ impl BufferPool{
                 Err(_)=>return Err(DbError::FileError),
             };
             let page_id=u64::from_le_bytes(buf[0..8].try_into().unwrap());
-            let size=u16::from_le_bytes(buf[8..10].try_into().unwrap());
-            if PAGE_SIZE-PAGE_HEADER_SIZE-size as usize>=RECORD_SIZE+SLOT_SIZE{
+            let size_x=u16::from_le_bytes(buf[8..10].try_into().unwrap());
+            if PAGE_SIZE-PAGE_HEADER_SIZE-size_x as usize>=size+SLOT_SIZE{
                 return Ok(page_id);
             }
             offset+=10;

@@ -7,7 +7,7 @@ use std::os::unix::prelude::FileExt;
 use crate::db_errors::DbError;
 use crate::page::DatabaseFile;
 
-const MAX_SIZE: usize = 4; // only 4 for dev tests first
+const MAX_SIZE: usize = 16; // only 16 for dev tests first
 
 const NODE_TAG_INTERNAL: u8 = 0;
 const NODE_TAG_LEAF: u8 = 1;

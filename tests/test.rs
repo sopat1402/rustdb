@@ -1,184 +1,200 @@
-use std::fs::File;
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
+
+use std::fs::{self, File};
+use std::path::PathBuf;
 
 use rustdb::db_errors::DbError;
 use rustdb::index::Index;
-use rustdb::page::DatabaseFile;
-use rustdb::slotted_page::RECORD_SIZE;
+use rustdb::page::{DatabaseFile, PageHeader, PageType, PAGE_SIZE};
+use rustdb::slotted_page::Page;
 
-fn make_record(id: u32, text: &[u8]) -> Result<([u8; RECORD_SIZE], usize),DbError> {
-    let mut record = [0u8; RECORD_SIZE];
-
-    record[0..4].copy_from_slice(&id.to_le_bytes());
-
-    let end = 4 + text.len();
-    if end>RECORD_SIZE {
-        return Err(DbError::SpaceOver);
-    }
-    record[4..end].copy_from_slice(text);
-
-    Ok((record, end))
+fn record(id: u32, payload_len: usize, fill: u8) -> Vec<u8> {
+    let mut value = vec![fill; payload_len + 4];
+    value[..4].copy_from_slice(&id.to_le_bytes());
+    value
 }
 
-fn open_database() -> Result<DatabaseFile, DbError> {
+fn database(name: &str) -> (DatabaseFile, Vec<PathBuf>) {
+    let root = std::env::temp_dir().join(format!(
+        "rustdb-{}-{}-{}",
+        name,
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+
+    let database_path = root.with_extension("db");
+    let metadata_path = root.with_extension("page");
+    let tree_path = root.with_extension("tree");
+
     let file = File::options()
-        .read(true).write(true).create(true)
-        .open("database.db")
-        .map_err(|_| DbError::FileError)?;
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&database_path)
+        .unwrap();
 
     let page_metadata = File::options()
-        .read(true).write(true).create(true)
-        .open("pages.page")
-        .map_err(|_| DbError::FileError)?;
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&metadata_path)
+        .unwrap();
 
     let btree = File::options()
-        .read(true).write(true).create(true)
-        .open("btree.tree")
-        .map_err(|_| DbError::FileError)?;
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tree_path)
+        .unwrap();
 
-    let size = file.metadata().map_err(|_| DbError::FileError)?.len();
+    let size = file.metadata().unwrap().len();
 
-    Ok(DatabaseFile {
-        file,
-        page_metadata,
-        btree,
-        size,
-    })
+    (
+        DatabaseFile {
+            file,
+            page_metadata,
+            btree,
+            size,
+        },
+        vec![database_path, metadata_path, tree_path],
+    )
+}
+
+fn remove_database(paths: Vec<PathBuf>) {
+    for path in paths {
+        let _ = fs::remove_file(path);
+    }
 }
 
 #[test]
-fn test(){
-    let _ = std::fs::remove_file("database.db");
-    let _ = std::fs::remove_file("pages.page");
-    let _ = std::fs::remove_file("btree.tree");
-    let db = match open_database() {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("Failed to open database files: {:?}", e);
-            return;
-        }
-    };
-    let mut index = match Index::new(db) {
-        Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("Failed to create index: {:?}", e);
-            return;
-        }
-    };
-    let (record1,size1)=match make_record(1,b"This is record 1"){
-        Ok(v)=>v,
-        Err(_)=>return,
-    };
-    match index.write_record(&record1,size1){
-        Ok(_)=>println!("Wrote record 1"),
-        Err(e)=>{
-            eprintln!("Failed to write record 1 {:?}",e);
-            return;
-        },
-    };
-    let (record2, size2) =match make_record(2, b"This is record 2"){
-        Ok(v)=>v,
-        Err(_)=>return,
-    };
-    match index.write_record(&record2, size2) {
-        Ok(_) => println!("write record 2"),
-        Err(e) => {
-            eprintln!("Failed to write record 2: {:?}", e);
-            return;
-        }
-    }
-    let (record3, size3) = match make_record(3, b"This is record 3"){
-        Ok(v)=>v,
-        Err(_)=>return,
-    };
-    match index.write_record(&record3, size3) {
-        Ok(_) => println!("Wrote record 3"),
-        Err(e) => {
-            eprintln!("Failed to write record 3: {:?}", e);
-            return;
-        }
-    }
-    let mut read_buf=[0u8;RECORD_SIZE];
-    match index.get_record(1,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 1 {:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 1 {:?}",e);
-        }
-    };
-    read_buf=[0u8;RECORD_SIZE];
-    match index.get_record(2,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 2 {:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 2 {:?}",e);
-        }
-    };
-    read_buf=[0u8;RECORD_SIZE];
-    match index.get_record(3,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 3 {:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 3 {:?}",e);
-        }
-    };
-    read_buf=[0u8;RECORD_SIZE];
-    match index.pool.evict_all() {
-        Ok(()) => println!("Flushed buffer pool."),
-        Err(e) => {
-            eprintln!("Failed to flush buffer pool: {:?}", e);
-            return;
-        }
-    }
-    match index.tree.serialise(&mut index.pool.db_file) {
-        Ok(()) => println!("Serialised B+ tree"),
-        Err(e) => {
-            eprintln!("Failed to serialise B+ tree: {:?}", e);
-            return;
-        }
-    }
+fn compaction_removes_deleted_slots_and_preserves_live_records() {
+    let mut page = Page::new(
+        PageHeader::new(1, PageType::Data),
+        [0u8; PAGE_SIZE],
+    );
+
+    let first = record(1, 2_900, b'a');
+    let second = record(2, 2_900, b'b');
+    let replacement = record(3, 3_400, b'c');
+
+    page.write_record(1, &first, first.len()).unwrap();
+    page.write_record(2, &second, second.len()).unwrap();
+    page.delete_record(1).unwrap();
+
+    // The hole is smaller than replacement, so write_record must
+    // compact the page before inserting the replacement.
+    page.write_record(3, &replacement, replacement.len())
+        .unwrap();
+
+    assert_eq!(page.read_record(2).unwrap(), second);
+    assert_eq!(page.read_record(3).unwrap(), replacement);
+
+    assert!(matches!(
+        page.read_record(1),
+        Err(DbError::RecordAbsent)
+    ));
+
+    assert!(page.trash.is_empty());
+    assert_eq!(page.header.item_count, 2);
+}
+
+#[test]
+fn index_update_replaces_record_in_place_when_new_value_fits() {
+    let (db, paths) = database("update-in-place");
+    let mut index = Index::new(db).unwrap();
+
+    let original = record(1, 100, b'a');
+    let updated = record(1, 40, b'z');
+
+    index
+        .write_record(&original, original.len())
+        .unwrap();
+
+    let page_before = index.tree.search(1).unwrap();
+
+    assert_eq!(
+        index
+            .update_record(1, &updated, updated.len())
+            .unwrap(),
+        updated.len()
+    );
+
+    let page_after = index.tree.search(1).unwrap();
+
+    assert_eq!(page_before, page_after);
+    assert_eq!(index.get_record(1).unwrap(), updated);
+
     drop(index);
-    println!("Dropped entire index.");
-    let db = match open_database() {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("Failed to reopen database files: {:?}", e);
-            return;
-        }
-    };
-    let mut index = match Index::new(db) {
-        Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("Failed to create index: {:?}", e);
-            return;
-        }
-    };
-    match index.get_record(1,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 1 after restart{:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 1 {:?}",e);
-        }
-    };
-    read_buf=[0u8;RECORD_SIZE];
-    match index.get_record(2,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 2 after restart{:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 2 {:?}",e);
-        }
-    };
-    read_buf=[0u8;RECORD_SIZE];
-    match index.get_record(3,&mut read_buf){
-        Ok(size)=>{
-            println!("Got record 3 after restart{:?}",&read_buf[4..size]);
-        },
-        Err(e)=>{
-            println!("Failed to get record 3 {:?}",e);
-        }
-    };
+    remove_database(paths);
+}
+
+#[test]
+fn index_update_grows_record_and_compacts_the_page() {
+    let (db, paths) = database("update-grow");
+    let mut index = Index::new(db).unwrap();
+
+    let first = record(1, 120, b'a');
+    let second = record(2, 120, b'b');
+    let third = record(3, 120, b'c');
+    let enlarged = record(1, 500, b'x');
+
+    index.write_record(&first, first.len()).unwrap();
+    index.write_record(&second, second.len()).unwrap();
+    index.write_record(&third, third.len()).unwrap();
+
+    let page_before = index.tree.search(1).unwrap();
+
+    index
+        .update_record(1, &enlarged, enlarged.len())
+        .unwrap();
+
+    assert_eq!(index.tree.search(1).unwrap(), page_before);
+    assert_eq!(index.get_record(1).unwrap(), enlarged);
+    assert_eq!(index.get_record(2).unwrap(), second);
+    assert_eq!(index.get_record(3).unwrap(), third);
+
+    let page = index.pool.get_page_mut(page_before).unwrap();
+
+    assert!(page.trash.is_empty());
+    assert_eq!(page.header.item_count, 3);
+
+    drop(index);
+    remove_database(paths);
+}
+
+#[test]
+fn index_update_moves_record_to_another_page_when_page_is_full() {
+    let (db, paths) = database("update-relocate");
+    let mut index = Index::new(db).unwrap();
+
+    let first = record(1, 4_000, b'a');
+    let second = record(2, 3_200, b'b');
+    let enlarged = record(1, 5_000, b'x');
+
+    index.write_record(&first, first.len()).unwrap();
+    index.write_record(&second, second.len()).unwrap();
+
+    let old_page = index.tree.search(1).unwrap();
+
+    index
+        .update_record(1, &enlarged, enlarged.len())
+        .unwrap();
+
+    let new_page = index.tree.search(1).unwrap();
+
+    assert_ne!(new_page, old_page);
+    assert_eq!(index.get_record(1).unwrap(), enlarged);
+    assert_eq!(index.get_record(2).unwrap(), second);
+
+    assert!(matches!(
+        index.get_record(99),
+        Err(DbError::RecordAbsent)
+    ));
+
+    drop(index);
+    remove_database(paths);
 }

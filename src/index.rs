@@ -1,12 +1,13 @@
 //Code by Sohum Pathak
 //sohum.pathak@protonmail.com
+
 use crate::db_errors::DbError;
 use crate::buffer_pool::BufferPool;
 use crate::b_plus_tree::BPlusTree;
 use crate::page::{DatabaseFile,PageType,PageHeader,PAGE_SIZE};
-use crate::slotted_page::{RECORD_SIZE,Page};
+use crate::slotted_page::{Page};
 
-pub const POOL_CAPACITY:usize=8; //magic number for now
+pub const POOL_CAPACITY:usize=16; //magic number for now
 
 pub struct Index{
     pub tree            :   BPlusTree,
@@ -25,13 +26,17 @@ impl Index{
             next_record_id,
         })
     }
-    pub fn get_record(&mut self,record_id : u32,record_buf : &mut [u8;RECORD_SIZE])->Result<usize,DbError>{
+    pub fn get_record(&mut self,record_id : u32)->Result<Vec<u8>,DbError>{
         let page_id:u64=self.tree.search(record_id)?;
-        let page:&Page=self.pool.get_page(page_id)?;
-        page.read_record(record_id,record_buf)
+        let page:&mut Page=self.pool.get_page_mut(page_id)?;
+        let buf:Vec<u8>=match page.read_record(record_id){
+            Ok(v)=>v,
+            Err(e)=>return Err(e),
+        };
+        Ok(buf)
     }
-    pub fn write_record(&mut self,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
-        let page_id:u64=match self.pool.find_free_page(){   //currently only gives the cached free
+    pub fn write_record(&mut self,buf:&[u8],size:usize)->Result<usize,DbError>{
+        let page_id:u64=match self.pool.find_free_page(size){
             //page
             Ok(id)=>id,
             Err(DbError::SpaceOver)=>{
@@ -54,10 +59,42 @@ impl Index{
         self.next_record_id+=1;
         Ok(size)
     }
-    pub fn update_record(&mut self,record_id:u32,buf:&[u8;RECORD_SIZE],size:usize)->Result<usize,DbError>{
+    pub fn update_record(&mut self,record_id:u32,buf:&[u8],size:usize)->Result<usize,DbError>{
         let page_id=self.tree.search(record_id)?;
         let page:&mut Page=self.pool.get_page_mut(page_id)?;
-        page.update_record(record_id,buf,size)
+        match page.update_record(record_id,buf,size){
+            Ok(_)=>{
+                let free_space=page.free_space();
+                self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
+            },
+            Err(DbError::SpaceOver)=>{
+                let old_free_space=page.free_space();
+                self.pool.db_file.edit_page_metadata(page_id,old_free_space as usize)?;
+                let page_id:u64=match self.pool.find_free_page(size){
+                    //page
+                    Ok(id)=>id,
+                    Err(DbError::SpaceOver)=>{
+                        let id=self.pool.allocate_page()?;
+                        let header=PageHeader::new(id,PageType::Data);
+                        let buf=[0u8;PAGE_SIZE];
+                        let page=Page::new(header,buf);
+                        self.pool.lru.set_new(page,&self.pool.db_file)?;
+                        id
+                    },
+                    Err(e)=>return Err(e),
+                };
+                let free_space={
+                    let page:&mut Page=self.pool.get_page_mut(page_id)?;
+                    page.write_record(record_id,buf,size)?;
+                    page.free_space()
+                };
+                self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
+                self.tree.delete(record_id)?;
+                self.tree.insert(record_id,page_id)?;
+            },
+            Err(e)=>return Err(e), //check for corrupted data error later
+        }
+        Ok(size)
     }
     pub fn delete_record(&mut self,record_id:u32)->Result<(),DbError>{
         let page_id=self.tree.search(record_id)?;

@@ -136,3 +136,19 @@ min max between space wastage due to internal fragmentation and available space 
 variable sized records yet as that is quite a deep rabbit hole with defragmentation and I want to first make a
 functioning database and database management system. When I do want variable sized records, I just need to edit slotted
 page.
+
+# Variable Sized Records
+
+I got rid of RECORD_SIZE. Reading a record yields a vector. Drop it when it is not needed anymore. Writing a record
+finds a trash slot with size>=provided size to the function. The leftover space is just left initially.
+Maybe later I'll work on making a secondary hole. For now, compaction will happen when there's a space over.
+Then a retry. If it fails at that point, then it returns space over. Compaction will empty trash and make a new
+buffer, replace the original one. I also need to fix the errors in other
+modules due to this change. When update record returns space over, it deleted the record. So then the index needs
+to find a new free page and change the B+ tree entry for that record id. Also, free_space and has_space have been
+changed to also check trash. Free space returns total free space. Has space takes size and then checks the
+contiguous space available and returns true or false based on that.
+I'm also recalculating the upper, lower, item count and checksum and marking the page as dirty.
+Compaction has been wired in and insertion and reading is working. Only the compaction test needs to be done for
+high amount of insertions.
+
