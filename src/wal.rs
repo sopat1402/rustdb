@@ -17,12 +17,12 @@ pub enum TaskType{
     Delete,
 }
 
-struct Log{
-    log_size    :   u16,
-    lsn         :   u64,
-    task_type   :   TaskType,
-    page_id     :   u64,
-    record_id   :   u32,
+pub struct Log{
+    pub log_size    :   u16,
+    pub lsn         :   u64,
+    pub task_type   :   TaskType,
+    pub page_id     :   u64,
+    pub record_id   :   u32,
 }
 
 impl Log{
@@ -99,7 +99,7 @@ impl WAL{
             .create(true)
             .open("wal.log")
             .map_err(|_| DbError::FileError)?;
-        let size=wal.metadata().map_err(|_| DbError::FileError)?.len();
+        let mut size=wal.metadata().map_err(|_| DbError::FileError)?.len();
         let last_lsn:u64;
         if size==0{
             last_lsn=0;
@@ -130,6 +130,14 @@ impl WAL{
         else{
             return Err(DbError::CorruptedWAL);
         }
+        if size==0{
+            let lsn_buf=last_lsn.to_le_bytes();
+            let len_buf=length.to_le_bytes();
+            wal.write_all_at(&lsn_buf,0).map_err(|_| DbError::FileError)?;
+            wal.write_all_at(&len_buf,8).map_err(|_| DbError::FileError)?;
+            wal.sync_data().map_err(|_| DbError::FileError)?;
+            size=10;
+        }
         Ok(Self{
             length,
             wal,
@@ -137,6 +145,7 @@ impl WAL{
             file_size:size,
         })
     }
+
     pub fn add_log(&mut self,task_type:TaskType,page_id:u64,record_id:u32,data:Option<&Vec<u8>>)->Result<(),DbError>{
         if data==None && !matches!(task_type,TaskType::Delete){
             return Err(DbError::InsufficientParams);
@@ -189,9 +198,65 @@ impl WAL{
         };
         let buf:Vec<u8>=entry.serialise(data)?;
         self.wal.write_all_at(&buf,self.file_size).map_err(|_| DbError::FileError)?;
-        self.wal.sync_data().map_err(|_| DbError::FileError)?;
+        self.length+=1;
         self.last_lsn+=1;
+        let len_buf=self.length.to_le_bytes();
+        let lsn_buf=self.last_lsn.to_le_bytes();
+        self.wal.write_all_at(&len_buf,8).map_err(|_| DbError::FileError)?;
+        self.wal.write_all_at(&lsn_buf,0).map_err(|_| DbError::FileError)?;
+        self.wal.sync_data().map_err(|_| DbError::FileError)?;
         self.file_size+=entry.log_size as u64;
+        Ok(())
+    }
+
+    pub fn find_next_log(&self,last_lsn:u64,page_id:u64,iterator:Option<u64>)->Result<Option<(Log,Option<Vec<u8>>,u64)>,DbError>{
+        let mut offset:u64=match iterator{
+            Some(v)=>{
+                if v<10{
+                    return Err(DbError::FileError);
+                }
+                v
+            },
+            None=>10,
+        };
+        while offset<self.file_size{
+            let (log,data)=Log::deserialise(&self.wal,offset)?;
+            if log.page_id==page_id && log.lsn>last_lsn{
+                let new_offset:u64=offset+log.log_size as u64;
+                return Ok(Some((log,data,new_offset)));
+            }
+            offset+=log.log_size as u64;
+        }
+        Ok(None)
+    }
+
+    pub fn get_log_any(&self,iterator:Option<u64>)->Result<Option<(Log,Option<Vec<u8>>,u64)>,DbError>{
+        let offset:u64=match iterator{
+            Some(v)=>{
+                if v<10 {
+                    10
+                }
+                else{
+                    v
+                }
+            },
+            None=>10,
+        };
+        if offset>=self.file_size {
+            return Ok(None);
+        }
+        let (log,data)=Log::deserialise(&self.wal,offset)?;
+        let new_offset=offset+log.log_size as u64;
+        Ok(Some((log,data,new_offset)))
+    }
+
+    pub fn reset(&mut self)->Result<(),DbError>{
+        self.wal.set_len(10).map_err(|_| DbError::FileError)?;
+        self.length=0;
+        self.file_size=10;
+        let len_buf=self.length.to_le_bytes();
+        self.wal.write_all_at(&len_buf,8).map_err(|_| DbError::FileError)?;
+        self.wal.sync_data().map_err(|_| DbError::FileError)?;
         Ok(())
     }
 }

@@ -166,4 +166,9 @@ must be updated too. Option<T> is pretty useful.
 On second thought, page id and record id are in fact needed for the write too after the page it is to be written
 to is resolved. It is needed for page reconstruction otherwise it could go anywhere.
 
+The find_next_log takes a page id, last lsn and an optional offset. if offset is none it takes it as 10, to skip
+the metadata. offset is taken to optimize the search. it is returned with the found log's size added to it if the
+log is found. the log and the attached data in an option are also returned. Last lsn is the lsn of the last task done
+on that page
+
 
