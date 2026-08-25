@@ -12,6 +12,16 @@ impl fmt::Display for CorruptedDataError {
 }
 impl std::error::Error for CorruptedDataError {}
 
+//wal corrupted
+#[derive(Debug)]
+pub struct CorruptedWAL;
+impl fmt::Display for CorruptedWAL {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Corrupted WAL")
+    }
+}
+impl std::error::Error for CorruptedWAL {}
+
 //stored checksum doesn't match the calculated one
 #[derive(Debug)]
 pub struct ChecksumMismatch;
@@ -121,6 +131,14 @@ impl fmt::Display for RecordMismatch {
     }
 }
 impl std::error::Error for RecordMismatch {}
+#[derive(Debug)]
+pub struct InsufficientParams;
+impl fmt::Display for InsufficientParams {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Not enough args to function.")
+    }
+}
+impl std::error::Error for InsufficientParams {}
 
 #[derive(Debug)]
 pub enum DbError{
@@ -136,4 +154,6 @@ pub enum DbError{
     PageCorrupted,
     MagicMismatch,
     ChecksumMismatch,
+    CorruptedWAL,
+    InsufficientParams,
 }

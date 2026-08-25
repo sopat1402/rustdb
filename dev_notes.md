@@ -152,3 +152,18 @@ I'm also recalculating the upper, lower, item count and checksum and marking the
 Compaction has been wired in and insertion and reading is working. Only the compaction test needs to be done for
 high amount of insertions.
 
+# WAL
+
+10 bytes of log metadata : the last lsn and the length i.e number of entries.
+a record will have log size at the start, then lsn, task type (write, update, delete) and then page id,
+record id and data, if relevant will be provided in the function as an immutable reference to a vector.
+log size is for traversal and deserialisation of a log
+for delete, data will be None. It's an Option that is provided so other callers will do Some<&record> in
+the function params. log will serialise itself and provide a buffer. After that, the record will be added as bytes.
+the size will be updated in the WAL struct to serve as an offset for new writes. The lsn used will be last_lsn+1
+and then lsn will be incremented. Along with the flush of the log, the length of the wal that is in the metadata
+must be updated too. Option<T> is pretty useful.
+On second thought, page id and record id are in fact needed for the write too after the page it is to be written
+to is resolved. It is needed for page reconstruction otherwise it could go anywhere.
+
+
