@@ -195,3 +195,22 @@ function will just check the last log too.
 
 made allocate_page and page_header :: new and buffer pool allocate page take lsn, assign wal.last_lsn
 
+# WAL test
+
+- fuck I realized I was passing db_file to the b_plus_tree for serialise. I'll be making a bootup function in
+    index. nvm I made a db file struct. the wal owns its own file. doesn't need a file object passed to it.
+
+Index was returning size on success. Made it return the record id instead since I abstracted that away. Made
+update_record return nothing i.e Ok(()).
+The database passes a CRUD test. I have to make index make the WAL checkpoint with a force flag on new index
+if the wal isn't empty. I'll do so in the bootup function since the constructor doesn't take &self.
+
+- My checkpoint function was not doing stuff to the B+ tree, as it shouldn't. Checkpointing is normal behavior
+    on the page. Instead, I'll make a recover function that actually puts stuff into the tree as well.
+
+Added a recover function. Also shifted the wal write to after shutdown. that's to not hit the checkpoint
+function in graceful shutdown. 
+
+
+
+

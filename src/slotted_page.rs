@@ -240,10 +240,6 @@ impl Page{
             Some(s)=>s,
             None=>return Err(DbError::RecordAbsent),
         };
-        let test_id=u32::from_le_bytes(self.buffer[slot.offset as usize..slot.offset as usize+4].try_into().unwrap());
-        if test_id!=slot.id{
-            return Err(DbError::RecordMismatch);
-        }
         if slot.size==0{
             return Err(DbError::RecordAbsent);
         }
