@@ -26,7 +26,7 @@ pub struct Log{
 }
 
 impl Log{
-    fn serialise(&self,data:Option<&Vec<u8>>)->Result<Vec<u8>,DbError>{
+    fn serialise(&self,data:Option<&[u8]>)->Result<Vec<u8>,DbError>{
         let mut buf:Vec<u8>=vec![0u8;self.log_size as usize];
         let log_size_bytes=self.log_size.to_le_bytes();
         let lsn_bytes=self.lsn.to_le_bytes();
@@ -46,7 +46,7 @@ impl Log{
         if matches!(self.task_type,TaskType::Delete){
             return Ok(buf);
         }
-        let record:&Vec<u8>=match data{
+        let record:&[u8]=match data{
             Some(v)=>v,
             None=>return Err(DbError::InsufficientParams),
         };
@@ -146,7 +146,7 @@ impl WAL{
         })
     }
 
-    pub fn add_log(&mut self,task_type:TaskType,page_id:u64,record_id:u32,data:Option<&Vec<u8>>)->Result<(),DbError>{
+    pub fn add_log(&mut self,task_type:TaskType,page_id:u64,record_id:u32,data:Option<&[u8]>)->Result<(),DbError>{
         if data==None && !matches!(task_type,TaskType::Delete){
             return Err(DbError::InsufficientParams);
         }

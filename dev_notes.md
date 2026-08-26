@@ -171,4 +171,8 @@ the metadata. offset is taken to optimize the search. it is returned with the fo
 log is found. the log and the attached data in an option are also returned. Last lsn is the lsn of the last task done
 on that page
 
+Integration with the rest of the code needs fresh eyes. I spent hours doing it, made sphagetti and needed to
+roll back to the pre integration state. I'm tempted to use AI but that defeats the purpose of a project and
+AI would probably just mess the code up even more.
 
+page.update deletes the record anyways!! I don't need to add a delete log again.
