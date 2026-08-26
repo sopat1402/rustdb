@@ -157,3 +157,97 @@ fn basic_wal_test(){
         Err(e)=>panic!("Shutdown error : {:?}",e),
     };
 }
+
+#[test]
+fn wal_update_delete_recovery_test(){
+    println!("Booting database");
+    let mut index=match bootup(){
+        Ok(idx)=>idx,
+        Err(e)=>panic!("Bootup error : {:?}",e),
+    };
+
+    println!("Writing initial records");
+    let update_id=match index.write_record(b"Hello",5){
+        Ok(v)=>{
+            println!("  - Wrote record {v} for WAL update test");
+            v
+        },
+        Err(e)=>panic!("Write error : {:?}",e),
+    };
+
+    let delete_id=match index.write_record(b"World",5){
+        Ok(v)=>{
+            println!("  - Wrote record {v} for WAL delete test");
+            v
+        },
+        Err(e)=>panic!("Write error : {:?}",e),
+    };
+
+    println!("Initiating clean shutdown...");
+    match index.shutdown(){
+        Ok(_)=>println!("  - Done!"),
+        Err(e)=>panic!("Shutdown error : {:?}",e),
+    };
+
+    println!("Writing WAL-only update entry");
+    match index.wal.add_log(
+        TaskType::Update,
+        1,
+        update_id,
+        Some(b"Updated")
+    ){
+        Ok(_)=>println!("  - Successfully wrote WAL update"),
+        Err(e)=>panic!("WAL update write failure : {:?}",e),
+    };
+    println!("Writing WAL-only delete entry");
+    match index.wal.add_log(
+        TaskType::Delete,
+        1,
+        delete_id,
+        None
+    ){
+        Ok(_)=>println!("  - Successfully wrote WAL delete"),
+        Err(e)=>panic!("WAL delete write failure : {:?}",e),
+    };
+
+    println!("Rebooting database for WAL recovery");
+    let mut index=match bootup(){
+        Ok(idx)=>idx,
+        Err(e)=>panic!("Recovery bootup error : {:?}",e),
+    };
+
+    println!("Testing WAL-recovered update of record {update_id}");
+    let rec=match index.get_record(update_id){
+        Ok(v)=>v,
+        Err(e)=>panic!("Updated record retrieval failure : {:?}",e),
+    };
+
+    let s=String::from_utf8(rec).unwrap();
+    println!("  - Record returned : {s}");
+
+    if s=="Updated"{
+        println!("  - WAL update recovery successful");
+    }else{
+        panic!("WAL update recovery returned incorrect data");
+    }
+
+    println!("Testing WAL-recovered deletion of record {delete_id}");
+    match index.get_record(delete_id){
+        Err(DbError::RecordAbsent)=>{
+            println!("  - WAL delete recovery successful");
+        },
+        Ok(v)=>{
+            let s=String::from_utf8(v).unwrap();
+            panic!("Deleted record still exists : {s}");
+        },
+        Err(e)=>panic!("Deletion recovery retrieval error : {:?}",e),
+    };
+
+    println!("Update and delete WAL recovery test passed");
+
+    println!("Initiating shutdown...");
+    match index.shutdown(){
+        Ok(_)=>println!("  - Done!"),
+        Err(e)=>panic!("Shutdown error : {:?}",e),
+    };
+}
