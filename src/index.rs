@@ -48,8 +48,8 @@ impl Index{
         let page_id:u64=match self.pool.find_free_page(size){
             Ok(id)=>id,
             Err(DbError::SpaceOver)=>{
-                let id=self.pool.allocate_page()?;
-                let header=PageHeader::new(id,PageType::Data);
+                let id=self.pool.allocate_page(self.wal.last_lsn)?;
+                let header=PageHeader::new(id,PageType::Data,self.wal.last_lsn);
                 let buf=[0u8;PAGE_SIZE];
                 let page=Page::new(header,buf);
                 self.pool.lru.set_new(page,&self.pool.db_file)?;
@@ -91,8 +91,8 @@ impl Index{
                 let page_id:u64=match self.pool.find_free_page(size){
                     Ok(id)=>id,
                     Err(DbError::SpaceOver)=>{
-                        let id=self.pool.allocate_page()?;
-                        let header=PageHeader::new(id,PageType::Data);
+                        let id=self.pool.allocate_page(self.wal.last_lsn)?;
+                        let header=PageHeader::new(id,PageType::Data,self.wal.last_lsn);
                         let buf=[0u8;PAGE_SIZE];
                         let page=Page::new(header,buf);
                         self.pool.lru.set_new(page,&self.pool.db_file)?;
@@ -128,8 +128,8 @@ impl Index{
                         let page_id:u64=match self.pool.find_free_page(size){
                             Ok(id)=>id,
                             Err(DbError::SpaceOver)=>{
-                                let id=self.pool.allocate_page()?;
-                                let header=PageHeader::new(id,PageType::Data);
+                                let id=self.pool.allocate_page(self.wal.last_lsn)?;
+                                let header=PageHeader::new(id,PageType::Data,self.wal.last_lsn);
                                 let buf=[0u8;PAGE_SIZE];
                                 let page=Page::new(header,buf);
                                 self.pool.lru.set_new(page,&self.pool.db_file)?;
@@ -191,8 +191,6 @@ impl Index{
         self.wal.reset()?;
         Ok(())
     }
-
-    //WAL related methods - for crash durability and safety
 
     fn checkpoint(&mut self,force:bool)->Result<(),DbError>{
         if force || (self.wal.file_size >= CHECKPOINT_MAX as u64){

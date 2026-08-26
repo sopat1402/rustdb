@@ -47,10 +47,10 @@ impl DatabaseFile{
         };
         Ok(())
     }
-    pub fn allocate_page(&mut self)->Result<u64,DbError>{
+    pub fn allocate_page(&mut self,lsn:u64)->Result<u64,DbError>{
         let offset:u64=self.size/(PAGE_SIZE as u64)+1;
         let page_id:u64=offset;
-        let header : PageHeader=PageHeader::new(page_id,PageType::Free);
+        let header : PageHeader=PageHeader::new(page_id,PageType::Free,lsn);
         let mut buffer = [0u8;PAGE_SIZE];
         header.serialise(&mut buffer);
         let _=match self.file.write_all_at(&buffer,self.size){
@@ -90,13 +90,13 @@ pub struct PageHeader{
 }
 
 impl PageHeader {
-    pub fn new(page_id: u64, page_type: PageType) -> Self {
+    pub fn new(page_id: u64, page_type: PageType,lsn:u64) -> Self {
         Self {
             magic: MAGIC,
             page_id,
             page_type: page_type,
             flags: PageFlags::Clean,
-            lsn: 0,
+            lsn,
             checksum: 0,
             item_count: 0,
             lower: PAGE_HEADER_SIZE as u16,

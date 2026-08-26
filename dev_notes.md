@@ -192,3 +192,6 @@ function will just check the last log too.
         the value and just continue. If record absent, it means that the record was deleted due to a space over
         inside the update when reconstructing. then, use the code to put the record elsewhere. Any other error is
         returned.
+
+made allocate_page and page_header :: new and buffer pool allocate page take lsn, assign wal.last_lsn
+

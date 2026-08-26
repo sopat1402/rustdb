@@ -6,7 +6,7 @@ use std::vec::Vec;
 pub struct WAL{
     length      :   u16,
     wal         :   File,
-    last_lsn    :   u64,
+    pub last_lsn    :   u64,
     pub file_size   :   u64,
 }
 

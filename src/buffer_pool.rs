@@ -92,8 +92,8 @@ impl BufferPool{
         }
         Ok(())
     }
-    pub fn allocate_page(&mut self)->Result<u64,DbError>{
-        self.db_file.allocate_page()
+    pub fn allocate_page(&mut self,lsn:u64)->Result<u64,DbError>{
+        self.db_file.allocate_page(lsn)
     }
     pub fn evict_page(&mut self,page_id:u64)->Result<(),DbError>{
         let node=self.lru.get_mut(page_id)?;
