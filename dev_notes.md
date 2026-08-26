@@ -111,7 +111,7 @@ see, since the page did in fact load, it means it got corrupted in the time from
 match means a file I/O error while loading the page or while flushing it earlier. That can't be fixed by just replaying a WAL so I'll do checksum before the WAL.
 
 k I wrote my own crc32 checksum function and then added checksum test on load and compute a checksum when returning
-a new page.
+a new page. Flush recalculates the checksum on its own.
 
 WAL will be a part of Index. WAL file will have the first 8 bytes as the last lsn which is updated on flushes.
 That's so that reconstruction knows what the last LSN was since on graceful shutdown, WAL is to be emptied (except
@@ -176,3 +176,9 @@ roll back to the pre integration state. I'm tempted to use AI but that defeats t
 AI would probably just mess the code up even more.
 
 page.update deletes the record anyways!! I don't need to add a delete log again.
+The reconstruct method of the index.rs needs to read the WAL from the first occurrence of the page's id.
+Then, it returns an iterator which is passed back and does it again.
+The checkpoint function uses get_log_any, which is just any next log. returns an offset iterator as an option for
+the next pass. Need to fix ownership in some functions prior to corrupted data error checks. Checkpoint function
+will check the page id, get that page, checks its lsn. if the lsn is >=the log lsn, continue. else, commit the
+change

@@ -12,6 +12,16 @@ impl fmt::Display for CorruptedDataError {
 }
 impl std::error::Error for CorruptedDataError {}
 
+#[derive(Debug)]
+pub struct CorruptedLRU;
+impl fmt::Display for CorruptedLRU {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Corrupted LRU")
+    }
+}
+impl std::error::Error for CorruptedLRU {}
+
+
 //wal corrupted
 #[derive(Debug)]
 pub struct CorruptedWAL;
@@ -156,4 +166,5 @@ pub enum DbError{
     ChecksumMismatch,
     CorruptedWAL,
     InsufficientParams,
+    CorruptedLRU,
 }

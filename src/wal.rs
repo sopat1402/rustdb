@@ -7,7 +7,7 @@ pub struct WAL{
     length      :   u16,
     wal         :   File,
     last_lsn    :   u64,
-    file_size   :   u64,
+    pub file_size   :   u64,
 }
 
 #[repr(u16)]

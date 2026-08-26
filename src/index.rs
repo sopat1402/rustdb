@@ -60,9 +60,9 @@ impl Index{
             page.free_space()
         };
         self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
-            //page
         self.tree.insert(self.next_record_id,page_id)?;
         self.next_record_id+=1;
+        self.checkpoint(false)?;
         Ok(size)
     }
     pub fn update_record(&mut self,record_id:u32,buf:&[u8],size:usize)->Result<usize,DbError>{
@@ -101,6 +101,7 @@ impl Index{
             },
             Err(e)=>return Err(e), //check for corrupted data error later
         }
+        self.checkpoint(false)?;
         Ok(size)
     }
     pub fn delete_record(&mut self,record_id:u32)->Result<(),DbError>{
@@ -113,13 +114,121 @@ impl Index{
         };
         self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
         self.tree.delete(record_id)?;
+        self.checkpoint(false)?;
         Ok(())
     }
     pub fn shutdown(&mut self)->Result<(),DbError>{
-        //checkpoint with force flag
+        self.checkpoint(true)?;
         self.pool.evict_all()?;
         self.tree.serialise(&mut self.pool.db_file)?;
         self.wal.reset()?;
+        Ok(())
+    }
+
+    //WAL related methods - for crash durability and safety
+
+    fn checkpoint(&mut self,force:bool)->Result<(),DbError>{
+        if force || (self.wal.file_size >= CHECKPOINT_MAX as u64){
+            let mut entry=self.wal.get_log_any(None)?;
+            while let Some((log,data,iterator))=entry{
+                {
+                    let page:&mut Page=self.pool.get_page_mut(log.page_id)?;
+                    if page.header.lsn>=log.lsn{
+                        entry=self.wal.get_log_any(Some(iterator))?;
+                        continue
+                    }
+                }
+                match log.task_type{
+                    TaskType::Delete=>{
+                        let page=self.pool.get_page_mut(log.page_id)?;
+                        match page.delete_record(log.record_id){
+                            Ok(_)=>{},
+                            Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
+                            Err(e)=>return Err(e),
+                        };
+                    },
+                    TaskType::Write=>{
+                        let page=self.pool.get_page_mut(log.page_id)?;
+                        let buf=match data{
+                            Some(val)=>val,
+                            None=>return Err(DbError::CorruptedWAL),
+                        };
+                        match page.write_record(log.record_id,&buf,log.log_size as usize-24){
+                            Ok(_)=>{},
+                            Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
+                            Err(DbError::SpaceOver)=>{},
+                            Err(e)=>return Err(e),
+                        };
+                    },
+                    TaskType::Update=>{
+                        let page=self.pool.get_page_mut(log.page_id)?;
+                        let buf=match data{
+                            Some(val)=>val,
+                            None=>return Err(DbError::CorruptedWAL),
+                        };
+                        match page.update_record(log.record_id,&buf,log.log_size as usize-24){
+                            Ok(_)=>{},
+                            Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
+                            Err(DbError::SpaceOver)=>{},
+                            Err(e)=>return Err(e),
+                        };
+                    },
+                };
+                {
+                    let page=self.pool.get_page_mut(log.page_id)?;
+                    page.header.lsn=log.lsn;
+                }
+                entry=self.wal.get_log_any(Some(iterator))?;
+            }
+            self.pool.flush_all()?;
+            self.wal.reset()?;
+        }
+        Ok(())
+    }
+
+    fn reconstruct(&mut self,page_id:u64)->Result<(),DbError>{
+        self.pool.lru.delete(page_id)?;
+        let page:&mut Page=self.pool.get_page_mut(page_id)?;
+        let mut last_lsn=page.header.lsn;
+        let mut entry=self.wal.find_next_log(last_lsn,page_id,None)?;
+        while let Some((log,data,iterator))=entry{
+            match log.task_type{
+                TaskType::Delete=>{
+                    page.delete_record(log.record_id)?;
+                },
+                TaskType::Write=>{
+                    if let Some(buf)=data{
+                        match page.write_record(log.record_id,&buf,log.log_size as usize-24){
+                            Ok(_)=>{},
+                            Err(DbError::SpaceOver)=>{},
+                            Err(e)=>return Err(e),
+                        };
+                    }
+                    else{
+                        return Err(DbError::CorruptedWAL);
+                    }
+                },
+                TaskType::Update=>{
+                    if let Some(buf)=data{
+                        match page.update_record(log.record_id,&buf,log.log_size as usize-24){
+                            Ok(_)=>{},
+                            Err(DbError::SpaceOver)=>{},
+                            Err(e)=>return Err(e),
+                        };
+                    }
+                    else{
+                        return Err(DbError::CorruptedWAL);
+                    }
+                },
+            };
+            last_lsn=log.lsn;
+            entry=self.wal.find_next_log(last_lsn,page_id,Some(iterator))?;
+        }
+        match self.pool.get_page_mut(page_id){
+            Ok(page)=>page.header.lsn=last_lsn,
+            Err(e)=>return Err(e),
+        };
+        self.pool.flush_page(page_id)?;
         Ok(())
     }
 }
