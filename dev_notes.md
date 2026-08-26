@@ -182,3 +182,13 @@ The checkpoint function uses get_log_any, which is just any next log. returns an
 the next pass. Need to fix ownership in some functions prior to corrupted data error checks. Checkpoint function
 will check the page id, get that page, checks its lsn. if the lsn is >=the log lsn, continue. else, commit the
 change
+
+Update record needs to check space over post reconstruction too and basically do the space over branch of the
+original match. Operations on the page themselves don't need to be redone after reconstruction as the reconstruct
+function will just check the last log too. 
+- ISSUE : update does reconstruct on corrupted data error, but then uses the reconstruct's error matching.
+        it needs to check for spaceover for a reallocation. So, another method must be used to know if there isn't space.
+- Resolved : did reconstruct normally with a ?; after the call. then, did read_record on the record. If ok, don't bind to
+        the value and just continue. If record absent, it means that the record was deleted due to a space over
+        inside the update when reconstructing. then, use the code to put the record elsewhere. Any other error is
+        returned.

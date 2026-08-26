@@ -36,6 +36,10 @@ impl Index{
         let page:&mut Page=self.pool.get_page_mut(page_id)?;
         let buf:Vec<u8>=match page.read_record(record_id){
             Ok(v)=>v,
+            Err(DbError::CorruptedDataError)=>{
+                self.reconstruct(page_id)?;
+                self.get_record(record_id)?
+            },
             Err(e)=>return Err(e),
         };
         Ok(buf)
@@ -56,8 +60,15 @@ impl Index{
         let free_space={
             let page:&mut Page=self.pool.get_page_mut(page_id)?;
             self.wal.add_log(TaskType::Write,page_id,self.next_record_id,Some(buf))?;
-            page.write_record(self.next_record_id,buf,size)?;
-            page.free_space()
+            match page.write_record(self.next_record_id,buf,size){
+                Ok(_)=>{},
+                Err(DbError::CorruptedDataError)=>self.reconstruct(page_id)?,
+                Err(e)=>return Err(e),
+            };
+            {
+                let page=self.pool.get_page(page_id)?;
+                page.free_space()
+            }
         };
         self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
         self.tree.insert(self.next_record_id,page_id)?;
@@ -92,14 +103,61 @@ impl Index{
                 let free_space={
                     let page:&mut Page=self.pool.get_page_mut(page_id)?;
                     self.wal.add_log(TaskType::Write,page_id,record_id,Some(buf))?;
-                    page.write_record(record_id,buf,size)?;
-                    page.free_space()
+                    match page.write_record(record_id,buf,size){
+                        Ok(_)=>{},
+                        Err(DbError::CorruptedDataError)=>self.reconstruct(page_id)?,
+                        Err(e)=>return Err(e),
+                    };
+                    {
+                        let page=self.pool.get_page(page_id)?;
+                        page.free_space()
+                    }
                 };
                 self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
                 self.tree.delete(record_id)?;
                 self.tree.insert(record_id,page_id)?;
             },
-            Err(e)=>return Err(e), //check for corrupted data error later
+            Err(DbError::CorruptedDataError)=>{
+                self.reconstruct(page_id)?;
+                let page=self.pool.get_page_mut(page_id)?;
+                match page.read_record(record_id){
+                    Ok(_)=>{},
+                    Err(DbError::RecordAbsent)=>{
+                        let old_free_space=page.free_space();
+                        self.pool.db_file.edit_page_metadata(page_id,old_free_space as usize)?;
+                        let page_id:u64=match self.pool.find_free_page(size){
+                            Ok(id)=>id,
+                            Err(DbError::SpaceOver)=>{
+                                let id=self.pool.allocate_page()?;
+                                let header=PageHeader::new(id,PageType::Data);
+                                let buf=[0u8;PAGE_SIZE];
+                                let page=Page::new(header,buf);
+                                self.pool.lru.set_new(page,&self.pool.db_file)?;
+                                id
+                            },
+                            Err(e)=>return Err(e),
+                        };
+                        let free_space={
+                            let page:&mut Page=self.pool.get_page_mut(page_id)?;
+                            self.wal.add_log(TaskType::Write,page_id,record_id,Some(buf))?;
+                            match page.write_record(record_id,buf,size){
+                                Ok(_)=>{},
+                                Err(DbError::CorruptedDataError)=>self.reconstruct(page_id)?,
+                                Err(e)=>return Err(e),
+                            };
+                            {
+                                let page=self.pool.get_page(page_id)?;
+                                page.free_space()
+                            }
+                        };
+                        self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
+                        self.tree.delete(record_id)?;
+                        self.tree.insert(record_id,page_id)?;
+                    },
+                    Err(e)=>return Err(e),
+                };
+            },
+            Err(e)=>return Err(e),
         }
         self.checkpoint(false)?;
         Ok(size)
@@ -109,8 +167,17 @@ impl Index{
         let free_space={
             let page:&mut Page=self.pool.get_page_mut(page_id)?;
             self.wal.add_log(TaskType::Delete,page_id,record_id,None)?;
-            page.delete_record(record_id)?;
-            page.free_space()
+            match page.delete_record(record_id){
+                Ok(_)=>{},
+                Err(DbError::CorruptedDataError)=>{
+                    self.reconstruct(page_id)?;
+                },
+                Err(e)=>return Err(e),
+            };
+            {
+                let page=self.pool.get_page(page_id)?;
+                page.free_space()
+            }
         };
         self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
         self.tree.delete(record_id)?;
