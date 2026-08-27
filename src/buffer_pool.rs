@@ -2,7 +2,7 @@
 //sohum.pathak@protonmail.com
 
 use crate::slotted_page::{Page,SLOT_SIZE};
-use crate::page::{DatabaseFile,PAGE_HEADER_SIZE,PAGE_SIZE};
+use crate::page::{DatabaseFile,PAGE_SIZE};
 use crate::db_errors::DbError;
 use crate::lru_cache::{LRUCache,DLLNode};
 use std::os::unix::prelude::FileExt;
@@ -46,7 +46,7 @@ impl BufferPool{
             };
             let page_id=u64::from_le_bytes(buf[0..8].try_into().unwrap());
             let size_x=u16::from_le_bytes(buf[8..10].try_into().unwrap());
-            if PAGE_SIZE-PAGE_HEADER_SIZE-size_x as usize>=size+SLOT_SIZE{
+            if size_x as usize>=size+SLOT_SIZE{
                 return Ok(page_id);
             }
             offset+=10;
@@ -68,6 +68,7 @@ impl BufferPool{
         Ok(&self.lru.dll.nodes[idx].page)
     }
     pub fn get_page_mut(&mut self, page_id: u64) -> Result<&mut Page, DbError> {
+        println!("Get page mut {page_id}");
         let idx = match self.lru.get_index(page_id) {
             Ok(idx) => idx,
             Err(_) => {

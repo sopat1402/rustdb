@@ -30,7 +30,7 @@ pub struct DatabaseFile{
 
 impl DatabaseFile{
     pub fn read_page(&self,page_id:u64,buf : &mut [u8;PAGE_SIZE])-> Result<(),DbError> {
-        let offset:u64=page_id*(PAGE_SIZE as u64);
+        let offset: u64 = (page_id - 1) * (PAGE_SIZE as u64);
         if offset+PAGE_SIZE as u64>self.size{
             return Err(DbError::PageAbsent);
         }
@@ -40,7 +40,7 @@ impl DatabaseFile{
         };
     }
     pub fn write_page(&self,page_id:u64,buf : &[u8;PAGE_SIZE])-> Result<(),DbError> {
-        let offset:u64=page_id*(PAGE_SIZE as u64);
+        let offset: u64 = (page_id - 1) * (PAGE_SIZE as u64);
         let _=match self.file.write_all_at(buf,offset){
             Ok(_)=>{},
             Err(_)=>return Err(DbError::FileError),

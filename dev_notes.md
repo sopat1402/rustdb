@@ -211,6 +211,17 @@ if the wal isn't empty. I'll do so in the bootup function since the constructor 
 Added a recover function. Also shifted the wal write to after shutdown. that's to not hit the checkpoint
 function in graceful shutdown. 
 
+Alright so I'm not editing page metadata somewhere and that's causing find_free_page to still thing a certain
+page has free space in my update test where I force a spaceover with the WAL. NAHH the issue was an incorrect
+free space test in that branch of the buffer pool find_free_page. it was subtracting size_x, which is the free
+space read from the file. K also my lru head was not updating head.prev. That was one bug too.
 
+Now somehow, the fucking page I need got deleted from the map? what the fuck how is that possible, who in the
+name of god deleted it, it sure as hell wasn't me?
+
+I'm actually going to fucking shoot someone. The bug was that read_page and write_page were using 0 indexed pages
+because some mofo FORGOT TO UPDATE THEM to 1 indexed!!
+There is an idempotency issue though : update_record, which is called by recover is unconditionally adding
+to the WAL. I'll just make an update_record_recovery function that does not add update to the WAL.
 
 
