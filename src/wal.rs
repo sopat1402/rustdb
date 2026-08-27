@@ -204,8 +204,8 @@ impl WAL{
         let lsn_buf=self.last_lsn.to_le_bytes();
         self.wal.write_all_at(&len_buf,8).map_err(|_| DbError::FileError)?;
         self.wal.write_all_at(&lsn_buf,0).map_err(|_| DbError::FileError)?;
-        self.wal.sync_data().map_err(|_| DbError::FileError)?;
         self.file_size+=entry.log_size as u64;
+        self.wal.sync_data().map_err(|_| DbError::FileError)?;
         Ok(())
     }
 
