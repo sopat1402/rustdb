@@ -35,10 +35,8 @@ impl LRUCache{
         }
     }
     pub fn get_index(&mut self,page_id:u64)->Result<usize,DbError>{
-        println!("Get index asked to get {page_id}");
         match self.map.get(&page_id){
             Some(&idx)=>{
-                println!("Map has the page");
                 match self.dll.move_to_head(idx){
                     Ok(_)=>return Ok(idx),
                     Err(_)=>{

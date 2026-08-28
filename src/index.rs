@@ -310,6 +310,12 @@ impl Index{
                         Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
                         Err(e)=>return Err(e),
                     };
+                    let free_space:u32;
+                    {
+                        let page=self.pool.get_page(log.page_id)?;
+                        free_space=page.free_space();
+                    }
+                    self.pool.db_file.edit_page_metadata(log.page_id,free_space as usize)?;
                 },
                 TaskType::Write=>{
                     let page:&mut Page=self.pool.get_page_mut(log.page_id)?;
@@ -321,11 +327,25 @@ impl Index{
                         Ok(_)=>{
                             self.tree.insert(log.record_id,log.page_id)?;
                             self.next_record_id+=1;
+                            let free_space=page.free_space();
                             page.header.lsn=log.lsn;
+                            let id=page.header.page_id;
+                            self.pool.db_file.edit_page_metadata(id,free_space as usize)?;
                         },
                         Err(DbError::SpaceOver)=>{
                             page.header.lsn=log.lsn;
-                            let new_page_id=self.pool.find_free_page(buf.len())?;
+                            let new_page_id:u64=match self.pool.find_free_page(buf.len()){
+                                Ok(id)=>id,
+                                Err(DbError::SpaceOver)=>{
+                                    let id=self.pool.allocate_page(self.wal.last_lsn)?;
+                                    let header=PageHeader::new(id,PageType::Data,self.wal.last_lsn);
+                                    let buf=[0u8;PAGE_SIZE];
+                                    let page=Page::new(header,buf);
+                                    self.pool.lru.set_new(page,&self.pool.db_file)?;
+                                    id
+                                },
+                                Err(e)=>return Err(e),
+                            };
                             let new_page=self.pool.get_page_mut(new_page_id)?;
                             match new_page.write_record(log.record_id,&buf,buf.len()){
                                 Ok(_)=>{
@@ -340,12 +360,16 @@ impl Index{
                                 },
                                 Err(e)=>return Err(e),
                             };
+                            self.tree.insert(log.record_id,new_page_id)?;
+                            let free_space=new_page.free_space();
+                            self.pool.db_file.edit_page_metadata(new_page_id,free_space as usize)?;
                         },
                         Err(DbError::CorruptedDataError)=>{
                             self.reconstruct(log.page_id)?;
                         },
                         Err(e)=>return Err(e),
                     };
+
                 },
                 TaskType::Update=>{
                     let buf=match data{
@@ -361,7 +385,7 @@ impl Index{
         Ok(())
     }
 
-    fn checkpoint(&mut self,force:bool)->Result<(),DbError>{
+    pub fn checkpoint(&mut self,force:bool)->Result<(),DbError>{
         if force || (self.wal.file_size >= CHECKPOINT_MAX as u64){
             let mut entry=self.wal.get_log_any(None)?;
             while let Some((log,data,iterator))=entry{
@@ -380,6 +404,13 @@ impl Index{
                             Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
                             Err(e)=>return Err(e),
                         };
+                        self.tree.delete(log.record_id)?;
+                        let free_space:u32;
+                        {
+                            let page=self.pool.get_page(log.page_id)?;
+                            free_space=page.free_space();
+                        }
+                        self.pool.db_file.edit_page_metadata(log.page_id,free_space as usize)?;
                     },
                     TaskType::Write=>{
                         let page=self.pool.get_page_mut(log.page_id)?;
@@ -388,24 +419,52 @@ impl Index{
                             None=>return Err(DbError::CorruptedWAL),
                         };
                         match page.write_record(log.record_id,&buf,log.log_size as usize-24){
-                            Ok(_)=>page.header.lsn=log.lsn,
+                            Ok(_)=>{
+                                page.header.lsn=log.lsn;
+                                self.tree.insert(log.record_id,page.header.page_id)?;
+                                let id=page.header.page_id;
+                                let free_space=page.free_space();
+                                self.pool.db_file.edit_page_metadata(id,free_space as usize)?;
+                            },
                             Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
-                            Err(DbError::SpaceOver)=>{},
+                            Err(DbError::SpaceOver)=>{
+                                let page_id:u64=match self.pool.find_free_page(buf.len()){
+                                    Ok(id)=>id,
+                                    Err(DbError::SpaceOver)=>{
+                                        let id=self.pool.allocate_page(self.wal.last_lsn)?;
+                                        let header=PageHeader::new(id,PageType::Data,self.wal.last_lsn);
+                                        let buf=[0u8;PAGE_SIZE];
+                                        let page=Page::new(header,buf);
+                                        self.pool.lru.set_new(page,&self.pool.db_file)?;
+                                        id
+                                    },
+                                    Err(e)=>return Err(e),
+                                };
+                                let free_space={
+                                    let page:&mut Page=self.pool.get_page_mut(page_id)?;
+                                    match page.write_record(log.record_id,&buf,buf.len()){
+                                        Ok(_)=>page.header.lsn=self.wal.last_lsn,
+                                        Err(DbError::CorruptedDataError)=>self.reconstruct(page_id)?,
+                                        Err(e)=>return Err(e),
+                                    };
+                                    {
+                                        let page=self.pool.get_page(page_id)?;
+                                        page.free_space()
+                                    }
+                                };
+                                self.pool.db_file.edit_page_metadata(page_id,free_space as usize)?;
+                                self.tree.insert(self.next_record_id,page_id)?;
+                                self.next_record_id+=1;
+                            },
                             Err(e)=>return Err(e),
                         };
                     },
                     TaskType::Update=>{
-                        let page=self.pool.get_page_mut(log.page_id)?;
                         let buf=match data{
                             Some(val)=>val,
                             None=>return Err(DbError::CorruptedWAL),
                         };
-                        match page.update_record(log.record_id,&buf,log.log_size as usize-24){
-                            Ok(_)=>page.header.lsn=log.lsn,
-                            Err(DbError::CorruptedDataError)=>self.reconstruct(log.page_id)?,
-                            Err(DbError::SpaceOver)=>{},
-                            Err(e)=>return Err(e),
-                        };
+                        self.update_record_recover(log.record_id,&buf,buf.len(),log.lsn)?;
                     },
                 };
                 {
@@ -422,15 +481,19 @@ impl Index{
 
     fn reconstruct(&mut self,page_id:u64)->Result<(),DbError>{
         self.pool.lru.delete(page_id)?;
-        let page:&mut Page=self.pool.get_page_mut(page_id)?;
+        let page:&Page=self.pool.get_page(page_id)?;
         let mut last_lsn=page.header.lsn;
         let mut entry=self.wal.find_next_log(last_lsn,page_id,None)?;
         while let Some((log,data,iterator))=entry{
             match log.task_type{
                 TaskType::Delete=>{
+                    let page=self.pool.get_page_mut(page_id)?;
                     page.delete_record(log.record_id)?;
+                    let free_space=page.free_space();
+                    self.pool.db_file.edit_page_metadata(log.page_id,free_space as usize)?;
                 },
                 TaskType::Write=>{
+                    let page:&mut Page=self.pool.get_page_mut(page_id)?;
                     if let Some(buf)=data{
                         match page.write_record(log.record_id,&buf,log.log_size as usize-24){
                             Ok(_)=>{},
@@ -443,6 +506,7 @@ impl Index{
                     }
                 },
                 TaskType::Update=>{
+                    let page=self.pool.get_page_mut(page_id)?;
                     if let Some(buf)=data{
                         match page.update_record(log.record_id,&buf,log.log_size as usize-24){
                             Ok(_)=>{},

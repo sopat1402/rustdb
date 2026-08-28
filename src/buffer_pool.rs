@@ -68,7 +68,6 @@ impl BufferPool{
         Ok(&self.lru.dll.nodes[idx].page)
     }
     pub fn get_page_mut(&mut self, page_id: u64) -> Result<&mut Page, DbError> {
-        println!("Get page mut {page_id}");
         let idx = match self.lru.get_index(page_id) {
             Ok(idx) => idx,
             Err(_) => {

@@ -224,4 +224,10 @@ because some mofo FORGOT TO UPDATE THEM to 1 indexed!!
 There is an idempotency issue though : update_record, which is called by recover is unconditionally adding
 to the WAL. I'll just make an update_record_recovery function that does not add update to the WAL.
 
+I'm debugging again for checkpoint. First, I made the spaceover branch for write do stuff and got rid of the
+special update branch and just made it call update_record_recover because that doesn't checkpoint or add unneeded
+WAL entries. The overflow test for checkpoint passed. Delete already passed. Now, I'm making my index methods
+edit page metadata wherever I forgot. K I fixed it.
 
+Found another bug : recover's write was trying to take a cached free page, which would naturally give
+spaceover. Fixed it, standard code from the other branch.
