@@ -1,3 +1,6 @@
+//Code by Sohum Pathak
+//sohum.pathak@protonmail.com
+
 use std::os::unix::prelude::FileExt;
 use std::fs::File;
 use crate::db_errors::DbError;

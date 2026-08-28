@@ -6,6 +6,7 @@ use rustdb::db_errors::DbError;
 use rustdb::index::Index;
 use rustdb::page::DatabaseFile;
 
+
 fn bootup()->Result<Index,DbError>{
     let file=File::options()
         .read(true)
@@ -29,7 +30,10 @@ fn bootup()->Result<Index,DbError>{
         btree,
         size,
     };
-    let index=Index::new(db_file)?;
+    let mut index=Index::new(db_file)?;
+    if index.wal.length!=0{
+        index.recover()?;
+    }
     Ok(index)
 }
 

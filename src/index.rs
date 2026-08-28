@@ -8,7 +8,7 @@ use crate::page::{DatabaseFile,PageType,PageHeader,PAGE_SIZE};
 use crate::slotted_page::{Page};
 use crate::wal::{WAL,TaskType};
 
-const POOL_CAPACITY:usize=16; //magic number for now
+const POOL_CAPACITY:usize=1024; // ~ 8Mib
 const CHECKPOINT_MAX:usize=16*1024*1024;
 
 pub struct Index{
@@ -19,8 +19,8 @@ pub struct Index{
 }
 
 impl Index{
-    pub fn new(mut db_file: DatabaseFile) -> Result<Self, DbError> {
-        let tree = BPlusTree::deserialise(&mut db_file)?;
+    pub fn new(db_file: DatabaseFile) -> Result<Self, DbError> {
+        let tree = BPlusTree::deserialise(&db_file.btree)?;
         let pool = BufferPool::new(POOL_CAPACITY, db_file);
         let wal = WAL::deserialise()?;
         let next_record_id: u32 = tree.max_key().map(|k| k + 1).unwrap_or(1);
@@ -284,7 +284,7 @@ impl Index{
     pub fn shutdown(&mut self)->Result<(),DbError>{
         self.checkpoint(true)?;
         self.pool.evict_all()?;
-        self.tree.serialise(&mut self.pool.db_file)?;
+        self.tree.serialise(&mut self.pool.db_file.btree)?;
         self.wal.reset()?;
         Ok(())
     }
@@ -381,7 +381,9 @@ impl Index{
             };
             entry=self.wal.get_log_any(Some(iterator))?;
         }
+        self.tree.serialise(&mut self.pool.db_file.btree)?;
         self.pool.evict_all()?;
+        self.wal.reset()?;
         Ok(())
     }
 
@@ -474,6 +476,7 @@ impl Index{
                 entry=self.wal.get_log_any(Some(iterator))?;
             }
             self.pool.flush_all()?;
+            self.tree.serialise(&mut self.pool.db_file.btree)?;
             self.wal.reset()?;
         }
         Ok(())

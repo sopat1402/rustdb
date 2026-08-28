@@ -2,12 +2,12 @@
 //sohum.pathak@protonmail.com
 
 use std::vec::Vec;
+use std::fs::File;
 use std::collections::HashSet;
 use std::os::unix::prelude::FileExt;
 use crate::db_errors::DbError;
-use crate::page::DatabaseFile;
 
-const MAX_SIZE: usize = 16; // only 16 for dev tests first
+const MAX_SIZE: usize = 256;
 
 const NODE_TAG_INTERNAL: u8 = 0;
 const NODE_TAG_LEAF: u8 = 1;
@@ -393,7 +393,7 @@ impl BPlusTree {
 
         self.trash.push(right_id);
     }
-    pub fn serialise(&self, db_file: &mut DatabaseFile) -> Result<(), DbError> {
+    pub fn serialise(&self, btree: &mut File) -> Result<(), DbError> {
         let mut buf: Vec<u8> = Vec::new();
 
         buf.extend_from_slice(&(self.m as u64).to_le_bytes());
@@ -442,15 +442,15 @@ impl BPlusTree {
             }
         }
 
-        match db_file.btree.write_all_at(&buf, 0) {
+        match btree.write_all_at(&buf, 0) {
             Ok(_) => {}
             Err(_) => return Err(DbError::FileError),
         };
-        match db_file.btree.set_len(buf.len() as u64) {
+        match btree.set_len(buf.len() as u64) {
             Ok(_) => {}
             Err(_) => return Err(DbError::FileError),
         };
-        match db_file.btree.sync_all() {
+        match btree.sync_all() {
             Ok(_) => {}
             Err(_) => return Err(DbError::FileError),
         };
@@ -469,8 +469,8 @@ impl BPlusTree {
             }
         }
     }
-    pub fn deserialise(db_file: &mut DatabaseFile) -> Result<Self, DbError> {
-        let len = match db_file.btree.metadata() {
+    pub fn deserialise(btree: &File) -> Result<Self, DbError> {
+        let len = match btree.metadata() {
             Ok(meta) => meta.len(),
             Err(_) => return Err(DbError::FileError),
         };
@@ -480,7 +480,7 @@ impl BPlusTree {
         }
 
         let mut buf = vec![0u8; len as usize];
-        match db_file.btree.read_at(&mut buf, 0) {
+        match btree.read_at(&mut buf, 0) {
             Ok(_) => {}
             Err(_) => return Err(DbError::FileError),
         };

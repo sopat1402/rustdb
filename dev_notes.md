@@ -231,3 +231,6 @@ edit page metadata wherever I forgot. K I fixed it.
 
 Found another bug : recover's write was trying to take a cached free page, which would naturally give
 spaceover. Fixed it, standard code from the other branch.
+
+Holy shit I realised I forgot to make the tree get serialised when doing checkpoint and revover while writing my
+compromises. Whoo glad I caught that.
