@@ -13,6 +13,16 @@ impl fmt::Display for CorruptedDataError {
 impl std::error::Error for CorruptedDataError {}
 
 #[derive(Debug)]
+pub struct TableNameExists;
+impl fmt::Display for TableNameExists {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Table name exists")
+    }
+}
+impl std::error::Error for TableNameExists {}
+
+//LRU is corrupted
+#[derive(Debug)]
 pub struct CorruptedLRU;
 impl fmt::Display for CorruptedLRU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -141,6 +151,7 @@ impl fmt::Display for RecordMismatch {
     }
 }
 impl std::error::Error for RecordMismatch {}
+
 #[derive(Debug)]
 pub struct InsufficientParams;
 impl fmt::Display for InsufficientParams {
@@ -149,6 +160,33 @@ impl fmt::Display for InsufficientParams {
     }
 }
 impl std::error::Error for InsufficientParams {}
+
+#[derive(Debug)]
+pub struct ColumnAbsent;
+impl fmt::Display for ColumnAbsent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such column.")
+    }
+}
+impl std::error::Error for ColumnAbsent {}
+
+#[derive(Debug)]
+pub struct InvalidComparison;
+impl fmt::Display for InvalidComparison {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Can't compare these two values.")
+    }
+}
+impl std::error::Error for InvalidComparison {}
+
+#[derive(Debug)]
+pub struct TypeMismatch;
+impl fmt::Display for TypeMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such type.")
+    }
+}
+impl std::error::Error for TypeMismatch {}
 
 #[derive(Debug)]
 pub enum DbError{
@@ -167,4 +205,8 @@ pub enum DbError{
     CorruptedWAL,
     InsufficientParams,
     CorruptedLRU,
+    TableNameExists,
+    ColumnAbsent,
+    InvalidComparison,
+    TypeMismatch,
 }

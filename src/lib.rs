@@ -7,3 +7,4 @@ pub mod lru_cache;
 pub mod slotted_page;
 pub mod buffer_pool;
 pub mod wal;
+pub mod tables;

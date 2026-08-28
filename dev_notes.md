@@ -233,4 +233,52 @@ Found another bug : recover's write was trying to take a cached free page, which
 spaceover. Fixed it, standard code from the other branch.
 
 Holy shit I realised I forgot to make the tree get serialised when doing checkpoint and revover while writing my
-compromises. Whoo glad I caught that.
+compromises. Whoo glad I caught that. I was like, "Wait a fucking minute."
+
+# Table layer
+
+For now, a table is a file with metadata of number of records, a magic number, a checksum and an array of 
+record ids (u32) and schema all in little endian bytes.
+
+magic = u32, checksum = u32, num records = u32, num columns = u16, next si no => 18 byte header
+
+A index creation method won't be hard, it's just another tree with generic data types and record id but I 
+will first finish this layer and the network layer. That's more of a performance optimisation.
+
+oh noooooo. I just realised, I have variable sized records in the db but the table has variable fields. 
+how tf will it know what field ends where? like varchar. fuck.
+
+Got it. When there's a varchar, the first 2 bytes after the previous column (which there will be i.e si no if it's
+the second col) will be a u16 of the size.
+
+in the table schema, the structure will be ⌬column name⌬data type⌬
+that's not byte corruption. The odds of some goblin putting a benzene ring in his table name are astronomical.
+no u232C allowed in table names. cry me a river.
+
+The table schema will be after the metadata but before records so the records can grow downwards. Have to know
+some way to know where the records start. Maybe a marker for it too. when indexes are added, ugh there would have to
+be filenames of the index trees too.
+
+The data type mentioned before will be from a u16 enum.
+
+lol I may not even need a benzene ring. Why can't I just put the name of the column following a u16 that gives its size?
+so column_name_size(2 bytes)column_name(? bytes)data_type(2 bytes). Smile, goblin.
+
+Once again, I'm loading table records into memory because doing file reads in chunks doesn't seem to matter much
+at this scope. 16,000,000 record IDs in a vector is just 64 megabytes. I doubt anyone will shed tears over
+4*96 Mb even if they're a big fish (or idiot) with 96,000,000 records in a single database. The u32 max is about
+4.3 billion. so 17.2 billion bytes (worst case if they're all in memory) is 17.2 gigabytes. At that point use
+a distributed database.
+
+I have done serialising and deserialising. straightforward byte handling. made an extract function too.
+
+for scan however, I'm getting O(N+C) where N is the number of columns and C is the number of conditions
+inter column comparison is not possible rn. with R records, O(R*(N+C)). That's slow but for now, even a functional
+scan is better than no scan at all. optimisation can come later.
+
+
+
+
+
+
+

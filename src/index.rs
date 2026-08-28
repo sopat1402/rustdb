@@ -9,7 +9,7 @@ use crate::slotted_page::{Page};
 use crate::wal::{WAL,TaskType};
 
 const POOL_CAPACITY:usize=1024; // ~ 8Mib
-const CHECKPOINT_MAX:usize=16*1024*1024;
+pub const CHECKPOINT_MAX:usize=16*1024*1024;
 
 pub struct Index{
     tree            :   BPlusTree,
