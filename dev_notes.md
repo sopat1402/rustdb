@@ -304,6 +304,8 @@ in the table's state. I also made the index's wal's file size public so that I c
 table.
 K I needed to check and, my write function adds record id to the slot and not to the buffer.
 
+Update is incomplete because I was doing condition.value.cmp(value). Fixed it in scan. Yayy CRUD test passed.
+
 
 
 

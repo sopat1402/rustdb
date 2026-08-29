@@ -3,13 +3,14 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::vec::Vec;
 use std::collections::HashMap;
+use std::cmp::Ordering;
 use crate::db_errors::DbError;
 use crate::crc32::crc32;
 use crate::index::Index;
 
 const MAGIC : u32=69420;
 
-struct Table{
+pub struct Table{
     file        :   File,
     size        :   u32,
     records     :   Vec<u32>,
@@ -28,7 +29,7 @@ pub enum DataTypes{
     VARCHAR,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq,Debug,Clone)]
 pub enum Value {
     Int32(i32),
     Uint32(u32),
@@ -39,8 +40,12 @@ pub enum Value {
 impl Value {
     fn compare(&self, other: &Value) -> Result<std::cmp::Ordering, DbError> {
         match (self, other) {
-            (Value::Int32(a), Value::Int32(b)) => Ok(a.cmp(b)),
-            (Value::Uint32(a), Value::Uint32(b)) => Ok(a.cmp(b)),
+            (Value::Int32(a), Value::Int32(b)) => {
+                Ok(a.cmp(b))
+            },
+            (Value::Uint32(a), Value::Uint32(b)) =>{
+                Ok(a.cmp(b))
+            },
             (Value::Float32(a), Value::Float32(b)) => {
                 a.partial_cmp(b).ok_or(DbError::InvalidComparison)
             }
@@ -51,6 +56,7 @@ impl Value {
     }
 }
 
+#[derive(Clone)]
 pub enum Operator{
     Equal,
     NotEqual,
@@ -74,14 +80,15 @@ impl Operator {
     }
 }
 
+#[derive(Clone)]
 pub struct Condition{
-    column      :   String,
-    operator    :   Operator,
-    value       :   Value,
+    pub column      :   String,
+    pub operator    :   Operator,
+    pub value       :   Value,
 }
 
 impl Table{
-    pub fn new(name : String,schema:Vec<(String,DataTypes)>,lsn:u64)->Result<Self,DbError>{
+    pub fn new(name : &String,schema:Vec<(String,DataTypes)>,lsn:u64)->Result<Self,DbError>{
         let mut f_name=name.clone();
         f_name+=".table";
         let file=File::options()
@@ -316,7 +323,7 @@ impl Table{
         v
     }
 
-    fn scan(&self, index:&mut Index, conditions : Vec<Condition>)->Result<(Vec<(Vec<(String,Value)>,u32)>),DbError>{
+    fn scan(&self, index:&mut Index, conditions : Vec<Condition>)->Result<Vec<(Vec<(String,Value)>,u32)>,DbError>{
         let mut rows:Vec<(Vec<(String,Value)>,u32)>=Vec::new();
         'outer:for id in &self.records{
             let buf=index.get_record(*id).map_err(|_| DbError::CorruptedDataError)?;
@@ -331,7 +338,7 @@ impl Table{
                     Some(t)=>t,
                     None=>return Err(DbError::ColumnAbsent),
                 };
-                let ordering=condition.value.compare(value)?;
+                let ordering=value.compare(&condition.value)?;
                 if condition.operator.matches(ordering){
                     continue 'inner;
                 }else{
@@ -375,13 +382,36 @@ impl Table{
         let rows=self.scan(index,conditions)?;
         let updated=rows.len();
         for (row,record_id) in rows{
-            let row_bytes=Table::row_to_bytes(row);
-            let size=row_bytes.len();
-            index.update_record(record_id,&row_bytes,size)?;
+            let mut new_row:Vec<(String,Value)>=Vec::new();
+            for (col_name,value) in row{
+                let mut new_value=value;
+                for update in &updates{
+                    if update.column==col_name{
+                        let type_matches=match (&new_value,&update.value){
+                            (Value::Int32(_),Value::Int32(_))=>true,
+                            (Value::Uint32(_),Value::Uint32(_))=>true,
+                            (Value::Float32(_),Value::Float32(_))=>true,
+                            (Value::Varchar(_),Value::Varchar(_))=>true,
+                            _=>false,
+                        };
+                        if !type_matches{
+                            return Err(DbError::TypeMismatch);
+                        }
+                        new_value=match &update.value{
+                            Value::Int32(v)=>Value::Int32(*v),
+                            Value::Uint32(v)=>Value::Uint32(*v),
+                            Value::Float32(v)=>Value::Float32(*v),
+                            Value::Varchar(v)=>Value::Varchar(v.clone()),
+                        };
+                    }
+                }
+                new_row.push((col_name,new_value));
+            }
+            let buf=Self::row_to_bytes(new_row);
+            index.update_record(record_id,&buf,buf.len())?;
         }
         Ok(updated)
     }
-
     pub fn insert(&mut self, index:&mut Index,row : Vec<(String,Value)>)->Result<(),DbError>{
         let schema: HashMap<&String, DataTypes> =self.schema.iter().map(|(name, ty)| (name, *ty)).collect();
         let len=self.schema.len() as usize;
@@ -389,20 +419,20 @@ impl Table{
         for col in &row{
             let (name,value)=col;
             if schema.contains_key(&name){
-                let mut types=(0,0,0,0);
-                let mut vals=(0,0,0,0);
+                let types;
+                let mut _vals=(0,0,0,0);
                 match value{
                     Value::Int32(_)=>{
-                        vals=(1,0,0,0);
+                        _vals=(1,0,0,0);
                     },
                     Value::Uint32(_)=>{
-                        vals=(0,1,0,0);
+                        _vals=(0,1,0,0);
                     },
                     Value::Float32(_)=>{
-                        vals=(0,0,1,0);
+                        _vals=(0,0,1,0);
                     },
                     Value::Varchar(_)=>{
-                        vals=(0,0,0,1);
+                        _vals=(0,0,0,1);
                     },
                 };
                 let d_type:&DataTypes=match schema.get(&name){
@@ -415,7 +445,7 @@ impl Table{
                     DataTypes::FLOAT32=>types=(0,0,1,0),
                     DataTypes::VARCHAR=>types=(0,0,0,1),
                 };
-                if !matches!(types,vals){
+                if !matches!(types,_vals){
                     return Err(DbError::TypeMismatch);
                 }else{
                     count+=1;
