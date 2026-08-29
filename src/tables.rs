@@ -120,6 +120,7 @@ impl Tables{
         let id=table.insert(&mut self.index,row)?;
         self.wal.add_log(TaskType::Insert,id,table_name)?;
         table.lsn=self.wal.last_lsn;
+        self.checkpoint(false)?;
         Ok(())
     }
 
@@ -138,6 +139,7 @@ impl Tables{
             None=>return Err(DbError::TableAbsent),
         };
         let updated=table.update(&mut self.index,conditions,changes)?;
+        self.checkpoint(false)?;
         Ok(updated)
     }
 
@@ -151,11 +153,12 @@ impl Tables{
             self.wal.add_log(TaskType::Delete,*id,table_name)?;
         }
         table.lsn=self.wal.last_lsn;
+        self.checkpoint(false)?;
         Ok(deleted.len())
     }
 
     pub fn shutdown(&mut self)->Result<(),DbError>{
-        //checkpoint first
+        self.checkpoint(true)?;
         let tables=self.tables.values_mut();
         for table in tables{
             table.serialise()?;
@@ -555,10 +558,18 @@ impl Table{
         v
     }
 
-    fn scan(&self, index:&mut Index, conditions : Vec<Condition>)->Result<Vec<(Vec<(String,Value)>,u32)>,DbError>{
+    fn scan(&mut self, index:&mut Index, conditions : Vec<Condition>)->Result<Vec<(Vec<(String,Value)>,u32)>,DbError>{
         let mut rows:Vec<(Vec<(String,Value)>,u32)>=Vec::new();
+        let mut fucked:Vec<u32>=Vec::new();
         'outer:for id in &self.records{
-            let buf=index.get_record(*id).map_err(|_| DbError::CorruptedDataError)?;
+            let buf=match index.get_record(*id).map_err(|_| DbError::CorruptedDataError){
+                Ok(v)=>v,
+                Err(DbError::RecordAbsent)=>{
+                    fucked.push(*id);
+                    continue 'outer;
+                },
+                Err(e)=>return Err(e),
+            };
             let row=self.extract(&buf)?;
             let mut cols:HashMap<&String,&Value>=HashMap::new();
             for col in &row{
@@ -579,10 +590,15 @@ impl Table{
             }
             rows.push((row,*id));
         }
+        for id in fucked{
+            if let Some(pos) = self.records.iter().position(|r_id| *r_id == id) {
+                self.records.remove(pos);
+            }
+        }
         Ok(rows)
     }
 
-    fn select(&self,index:&mut Index, conditions : Vec<Condition>,cols : Vec<String>)->Result<Vec<Vec<(String,Value)>>,DbError>{
+    fn select(&mut self,index:&mut Index, conditions : Vec<Condition>,cols : Vec<String>)->Result<Vec<Vec<(String,Value)>>,DbError>{
         let rows=self.scan(index,conditions)?;
         let mut result:Vec<Vec<(String,Value)>>=Vec::new();
         let cols: HashSet<String> = cols.into_iter().collect();
@@ -690,10 +706,15 @@ impl Table{
         if count!=len{
             return Err(DbError::InsufficientParams);
         }
-        let buf=Self::row_to_bytes(row);
+        let w_buf=Self::row_to_bytes(row);
+        let si_bytes=self.next_si_no.to_le_bytes();
+        let mut buf:Vec<u8>=Vec::new();
+        buf.extend(si_bytes);
+        buf.extend(w_buf);
         let _=match index.write_record(&buf,buf.len()){
             Ok(v)=>{
                 self.records.push(v);
+                self.next_si_no+=1;
                 return Ok(v);
             },
             Err(e)=>return Err(e),

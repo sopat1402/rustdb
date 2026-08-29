@@ -338,3 +338,33 @@ corrupted data error is basically irrecoverable.
 now to sync my checkpointing, I'll be looking at the page wal to see if its size came down to 10 after an operation,
 which means reset was called, as it is in a checkpoint. 
 i should do so for all operations, not just insert and delete because then the page wal may empty on another one.
+
+I can't get away with just checking the individual thing, I need to check the source. because I'm fr wondering now if there could have been a single WAL that handled pages and tables. it's a bit hairy now that  there's 2 sources of truth. the wal to the table is added prior to doing the operation but the wal log to the records is done when it is called. they are actually close to each other like this : 
+
+(table wal write)(page operation+other stuff) so it is less likely to crash there. but if I move table write to after, there's a larger gap between the two fsyncs
+
+I can't make all that go to shit. I will take the L of my database being not durable in that few microseconds window
+between the table WAL fsync and the operation fsync.
+nah instead I'll add error handling like this : I'll search my records and see what it does if a record id already exists in the tree. that way, on insert if the write operation gives me a duplicate key, I'll delete the original and put in the one the user sent. for update, they can just change it again. delete would delete it from the table but not the tree
+but that record id won't be accessed again anyways.
+
+oh damn I fucked the insert error case. let's map it out. the only time that there can be a corruption due to that window is when record id is in the table but not the b tree, since the table wal is written first. so on record absent I'll just delete that record id lol i'm so smart.
+Yeah so here's what is happening : scan is seeing wherever there's a record absent and getting rid of it in the table's own state because that means the b+ tree doesn't have it.
+
+Since the failure can only come between wal writes and the table wal state only changes on insert and delete : 
+- when scan finds a record absent, it deletes it from the table's record vector. Do I need to make this durable too?
+    no. because whenever there's a record absent it will delete it anyways.
+- On delete crash, the record id disappears from the table's record array but is still in the tree and pages. 
+    It does not matter, since the next_record_id for the index does not change. So that record id will then be a
+    ghost one in the pages with nothing that can reference it. Since the odds of this happening are very low, such
+    ghost records are not concerns for space wastage.
+
+The worst that the user would have to worry about is that one record they tried to insert during 
+the crash not being there.
+
+Assuming that there's a crash in that window and the window is say, 20 microseconds  i.e the time to get a free
+page after which the sync is done once the page is acquired, as calculated before if we assume an extra 0.1ms for
+other operations, the total time can be taken as 203ms with the network latency factored in. The odds of a database
+crashing then are 20μs/203ms which is about 1/10,000 or 0.01%. So, there's a 0.01% chance of a crash occuring
+in that window, in which case a user's inserted value won't be in the database. If a database crashes, I suppose
+they ought to recheck then.

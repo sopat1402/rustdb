@@ -48,3 +48,23 @@ nodes and child vectors in addition to 12 byte leaf nodes.
 
 Complete ARIES based on that 68 page paper is too complex and may even be overkill. Don't use this as super 
 critical infrastructure, I suppose, haha.
+
+My WAL is not perfect either. This is more of an idgaf thing. I spent hours writing a second WAL for tables so
+that I didn't have to change the WAL for pages but now there's two WALs I need to handle, 2 sources of truth.
+I'll take the L and admit that there's a crash window of a few microseconds (under 10) between the first fsync
+and the second fsync. when it goes there, changes can be lost.
+
+Since the failure can only come between wal writes and the table wal state only changes on insert and delete : 
+- when scan finds a record absent, it deletes it from the table's record vector. Do I need to make this durable too?
+    no. because whenever there's a record absent it will delete it anyways.
+- On delete crash, the record id disappears from the table's record array but is still in the tree and pages. 
+    It does not matter, since the next_record_id for the index does not change. So that record id will then be a
+    ghost one in the pages with nothing that can reference it. Since the odds of this happening are very low, such
+    ghost records are not concerns for space wastage.
+
+Assuming that there's a crash in that window and the window is say, 20 microseconds  i.e the time to get a free
+page after which the sync is done once the page is acquired, as calculated before if we assume an extra 0.1ms for
+other operations, the total time can be taken as 203ms with the network latency factored in. The odds of a database
+crashing then are 20μs/203ms which is about 1/10,000 or 0.01%. So, there's a 0.01% chance of a crash occuring
+in that window, in which case a user's inserted value won't be in the database. If a database crashes, I suppose
+they ought to recheck then.
