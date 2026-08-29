@@ -13,6 +13,15 @@ impl fmt::Display for CorruptedDataError {
 impl std::error::Error for CorruptedDataError {}
 
 #[derive(Debug)]
+pub struct TableAbsent;
+impl fmt::Display for TableAbsent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such table")
+    }
+}
+impl std::error::Error for TableAbsent {}
+
+#[derive(Debug)]
 pub struct TableNameExists;
 impl fmt::Display for TableNameExists {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -209,4 +218,5 @@ pub enum DbError{
     ColumnAbsent,
     InvalidComparison,
     TypeMismatch,
+    TableAbsent,
 }

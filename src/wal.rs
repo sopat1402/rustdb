@@ -60,7 +60,7 @@ impl Log{
     fn deserialise(wal : &File,offset:u64)->Result<(Self,Option<Vec<u8>>),DbError>{
         let mut buf_size=[0u8;2];
         wal.read_at(&mut buf_size,offset).map_err(|_| DbError::FileError)?;
-        let size:u16=u16::from_le_bytes(buf_size[0..2].try_into().unwrap());
+        let size:u16=u16::from_le_bytes(buf_size[0..2].try_into().map_err(|_| DbError::CorruptedWAL)?);
         if size<24{
             return Err(DbError::CorruptedWAL);
         }
@@ -68,16 +68,16 @@ impl Log{
         if wal.read_at(&mut log_buffer,offset).map_err(|_| DbError::FileError)? !=size as usize{
             return Err(DbError::CorruptedWAL);
         }
-        let lsn=u64::from_le_bytes(log_buffer[2..10].try_into().unwrap());
-        let task=u16::from_le_bytes(log_buffer[10..12].try_into().unwrap());
+        let lsn=u64::from_le_bytes(log_buffer[2..10].try_into().map_err(|_| DbError::CorruptedWAL)?);
+        let task=u16::from_le_bytes(log_buffer[10..12].try_into().map_err(|_| DbError::CorruptedWAL)?);
         let task_type=match task{
             0=>TaskType::Write,
             1=>TaskType::Update,
             2=>TaskType::Delete,
             _=>return Err(DbError::CorruptedWAL),
         };
-        let page_id=u64::from_le_bytes(log_buffer[12..20].try_into().unwrap());
-        let record_id=u32::from_le_bytes(log_buffer[20..24].try_into().unwrap());
+        let page_id=u64::from_le_bytes(log_buffer[12..20].try_into().map_err(|_| DbError::CorruptedWAL)?);
+        let record_id=u32::from_le_bytes(log_buffer[20..24].try_into().map_err(|_| DbError::CorruptedWAL)?);
         let log=Self{
             log_size:size,
             lsn,
@@ -113,7 +113,7 @@ impl WAL{
                 Ok(_)=>{},
                 Err(_)=>return Err(DbError::FileError),
             };
-            last_lsn=u64::from_le_bytes(buf[0..8].try_into().unwrap());
+            last_lsn=u64::from_le_bytes(buf[0..8].try_into().map_err(|_| DbError::CorruptedWAL)?);
         }
         else{
             return Err(DbError::CorruptedWAL);
@@ -128,7 +128,7 @@ impl WAL{
                 Ok(_)=>{},
                 Err(_)=>return Err(DbError::FileError),
             };
-            length=u16::from_le_bytes(buf[0..2].try_into().unwrap());
+            length=u16::from_le_bytes(buf[0..2].try_into().map_err(|_| DbError::CorruptedWAL)?);
         }
         else{
             return Err(DbError::CorruptedWAL);

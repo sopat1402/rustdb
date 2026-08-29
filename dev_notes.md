@@ -306,6 +306,25 @@ K I needed to check and, my write function adds record id to the slot and not to
 
 Update is incomplete because I was doing condition.value.cmp(value). Fixed it in scan. Yayy CRUD test passed.
 
+# Table WAL
 
+How often to checkpoint my table wal? index wal checkpoint is based on size but that has all 4 operations put in there.
+so maybe I should delete the file_size from table_wal and check the index wal file size. so upon successful operation,
+I check if the wal size is down to 10 bytes, which is the wal metadata size since each crud operation calls 
+wal.checkpoint(false) in index. so based on that I checkpoint my table and serialise it there. 
+but for that I'd first need a struct that contains all tables. 
+that would have to be a file too right? tables.tables. stores the table names. 
+loads their structs into a hashmap of table name to table struct.
+
+Table wal has been wired in for serialise, reset and deserialise and new. checkpoint linking, adding logs and stuff
+is left but I first want to make Tables to control all tables from there and put the methods in there do crud
+on tables and edit tables and delete tables.
+
+I made a delete_table method. Table deletes itself, its records, its file and its wal file.
+The tables struct needs to have a bootup first. Which means, there's a file of the different tables.
+It then reads them, loads those tables and the index, which it owns now has a bootup function too. Furthermore,
+this tables struct will be serialised on any create table or delete table since it is trivial.
+
+While making tables, i realised I should have just one wal for all tables. fuck me.
 
 

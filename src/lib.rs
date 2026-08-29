@@ -8,3 +8,4 @@ pub mod slotted_page;
 pub mod buffer_pool;
 pub mod wal;
 pub mod tables;
+pub mod table_wal;

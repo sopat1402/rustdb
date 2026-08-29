@@ -44,8 +44,8 @@ impl BufferPool{
                 Ok(_)=>{},
                 Err(_)=>return Err(DbError::FileError),
             };
-            let page_id=u64::from_le_bytes(buf[0..8].try_into().unwrap());
-            let size_x=u16::from_le_bytes(buf[8..10].try_into().unwrap());
+            let page_id=u64::from_le_bytes(buf[0..8].try_into().map_err(|_| DbError::CorruptedDataError)?);
+            let size_x=u16::from_le_bytes(buf[8..10].try_into().map_err(|_| DbError::CorruptedDataError)?);
             if size_x as usize>=size+SLOT_SIZE{
                 return Ok(page_id);
             }

@@ -156,28 +156,28 @@ impl PageHeader {
     }
 
     pub fn deserialise(buffer:&mut [u8;PAGE_SIZE])->Result<Self,DbError>{
-        let magic=u32::from_le_bytes(buffer[0..4].try_into().unwrap());
+        let magic=u32::from_le_bytes(buffer[0..4].try_into().map_err(|_| DbError::PageCorrupted)?);
         if magic!=MAGIC{
             return Err(DbError::MagicMismatch);
         }
-        let page_id=u64::from_le_bytes(buffer[4..12].try_into().unwrap());
-        let page_type=match u16::from_le_bytes(buffer[12..14].try_into().unwrap()){
+        let page_id=u64::from_le_bytes(buffer[4..12].try_into().map_err(|_| DbError::PageCorrupted)?);
+        let page_type=match u16::from_le_bytes(buffer[12..14].try_into().map_err(|_| DbError::PageCorrupted)?){
             0=>PageType::Free,
             1=>PageType::Data,
             2=>PageType::Meta,
             _=>return Err(DbError::PageTypeMismatch),
         };
-        let flags:PageFlags=match u16::from_le_bytes(buffer[14..16].try_into().unwrap()){
+        let flags:PageFlags=match u16::from_le_bytes(buffer[14..16].try_into().map_err(|_| DbError::PageCorrupted)?){
             0=>PageFlags::Clean,
             1=>PageFlags::Dirty,
             2=>PageFlags::Corrupted,
             _=>return Err(DbError::PageFlagMismatch),
         };
-        let lsn=u64::from_le_bytes(buffer[16..24].try_into().unwrap());
-        let checksum=u32::from_le_bytes(buffer[24..28].try_into().unwrap());
-        let item_count=u16::from_le_bytes(buffer[28..30].try_into().unwrap());
-        let lower=u16::from_le_bytes(buffer[30..32].try_into().unwrap());
-        let upper=u16::from_le_bytes(buffer[32..34].try_into().unwrap());
+        let lsn=u64::from_le_bytes(buffer[16..24].try_into().map_err(|_| DbError::PageCorrupted)?);
+        let checksum=u32::from_le_bytes(buffer[24..28].try_into().map_err(|_| DbError::PageCorrupted)?);
+        let item_count=u16::from_le_bytes(buffer[28..30].try_into().map_err(|_| DbError::PageCorrupted)?);
+        let lower=u16::from_le_bytes(buffer[30..32].try_into().map_err(|_| DbError::PageCorrupted)?);
+        let upper=u16::from_le_bytes(buffer[32..34].try_into().map_err(|_| DbError::PageCorrupted)?);
         let mut reserved = [0u8;62];
         reserved.copy_from_slice(&buffer[34..96]);
         let header : PageHeader=PageHeader{
