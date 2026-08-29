@@ -164,6 +164,101 @@ impl Tables{
         self.wal.reset()?;
         Ok(())
     }
+
+    pub fn checkpoint(&mut self,force:bool)->Result<(),DbError>{
+        if force || self.index.wal.file_size==10{
+            let mut entry=self.wal.get_log_any(None)?;
+            let mut modded:HashSet<String>=HashSet::new();
+            while let Some((log,iterator))=entry{
+                let table_name=log.table_name;
+                let table=match self.tables.get_mut(&table_name){
+                    Some(t)=>t,
+                    None=>{
+                        entry=self.wal.get_log_any(Some(iterator))?;
+                        continue;
+                    },
+                };
+                if table.lsn>=log.lsn{
+                    entry=self.wal.get_log_any(Some(iterator))?;
+                    continue;
+                }else{
+                    match log.task_type{
+                        TaskType::Insert=>{
+                            table.records.push(log.record_id);
+                            table.lsn=log.lsn;
+                            modded.insert(table_name);
+                        },
+                        TaskType::Delete=>{
+                             if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
+                                table.records.remove(pos);
+                            }
+                            table.lsn=log.lsn;
+                            modded.insert(table_name);
+                        },
+                    };
+                    entry=self.wal.get_log_any(Some(iterator))?;
+                    continue;
+                }
+            }
+            for table_name in modded{
+                let table=self.tables.get_mut(&table_name).unwrap();
+                table.serialise()?;
+            }
+            self.wal.reset()?;
+        }
+        Ok(())
+    }
+
+    pub fn recover(&mut self)->Result<(),DbError>{
+        if self.wal.file_size==10{
+            return Ok(());
+        }
+        else if self.wal.file_size<10{
+            return Err(DbError::CorruptedWAL);
+        }
+        else{
+            let mut entry=self.wal.get_log_any(None)?;
+            let mut modded:HashSet<String>=HashSet::new();
+            while let Some((log,iterator))=entry{
+                let table_name=log.table_name;
+                let table=match self.tables.get_mut(&table_name){
+                    Some(t)=>t,
+                    None=>{
+                        //deleted table?
+                        entry=self.wal.get_log_any(Some(iterator))?;
+                        continue;
+                    },
+                };
+                if table.lsn>=log.lsn{
+                    entry=self.wal.get_log_any(Some(iterator))?;
+                    continue;
+                }else{
+                    match log.task_type{
+                        TaskType::Insert=>{
+                            table.records.push(log.record_id);
+                            table.lsn=log.lsn;
+                            modded.insert(table_name);
+                        },
+                        TaskType::Delete=>{
+                             if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
+                                table.records.remove(pos);
+                            }
+                            table.lsn=log.lsn;
+                            modded.insert(table_name);
+                        },
+                    };
+                    entry=self.wal.get_log_any(Some(iterator))?;
+                    continue;
+                }
+            }
+            for table_name in modded{
+                let table=self.tables.get_mut(&table_name).unwrap();
+                table.serialise()?;
+            }
+            self.wal.reset()?;
+        }
+        Ok(())
+    }
 }
 
 struct Table{

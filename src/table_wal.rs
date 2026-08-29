@@ -7,7 +7,7 @@ pub struct TableWAL{
     pub length      :   u16,
     wal             :   File,
     pub last_lsn    :   u64,
-    file_size       :   u64,
+    pub file_size       :   u64,
 }
 
 #[repr(u16)]
@@ -175,27 +175,6 @@ impl TableWAL{
         self.file_size+=entry.log_size as u64;
         self.wal.sync_data().map_err(|_| DbError::FileError)?;
         Ok(())
-    }
-
-    pub fn find_next_log(&self,last_lsn:u64,table_name:&String,iterator:Option<u64>)->Result<Option<(Log,u64)>,DbError>{
-        let mut offset:u64=match iterator{
-            Some(v)=>{
-                if v<10{
-                    return Err(DbError::FileError);
-                }
-                v
-            },
-            None=>10,
-        };
-        while offset<self.file_size{
-            let log=Log::deserialise(&self.wal,offset)?;
-            if log.table_name==*table_name && log.lsn>last_lsn{
-                let new_offset:u64=offset+log.log_size as u64;
-                return Ok(Some((log,new_offset)));
-            }
-            offset+=log.log_size as u64;
-        }
-        Ok(None)
     }
 
     pub fn get_log_any(&self,iterator:Option<u64>)->Result<Option<(Log,u64)>,DbError>{
