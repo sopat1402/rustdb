@@ -57,9 +57,11 @@ db file modified only on flush and allocate so far. page deletion not added. oth
 in their impl too to abstract all the byte management away. Just make an array using to_le_bytes() and then
 do copy_from_slice at the needed offset in the buffer from the bytes array.
 
-- each record is fixes size : 128 bytes at max size. That doesn't mean each user entry must be 128 bytes.
+- each record is fixed size : 128 bytes at max size. That doesn't mean each user entry must be 128 bytes.
 just that putting 128 bytes solves external fragmentation but usually guarantees internal fragmentation.
 each slot is 6 bytes. record id, offset and size. this is where the actual user entered data size is stored.
+
+- Update: there's variable sized records
 
 # B+ tree
 
@@ -327,4 +329,12 @@ this tables struct will be serialised on any create table or delete table since 
 
 While making tables, i realised I should have just one wal for all tables. fuck me.
 
+K the WAL has been wired in and only checkpoints and recovery are needed. I see no use for recover because a 
+Vec<u32> that's all in memory isn't spontaneously getting corrupted.
+the only corrupted data error in my code is on deserialisation and byte handling i.e post flush. 
+checksums are being checked and it wont get to the point of recover anyways and in tables.rs, 
+corrupted data error is basically irrecoverable.
 
+now to sync my checkpointing, I'll be looking at the page wal to see if its size came down to 10 after an operation,
+which means reset was called, as it is in a checkpoint. 
+i should do so for all operations, not just insert and delete because then the page wal may empty on another one.

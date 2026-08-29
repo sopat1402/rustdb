@@ -4,7 +4,7 @@ use std::fs::File;
 use std::vec::Vec;
 use std::collections::HashMap;
 use crate::db_errors::DbError;
-use crate::table_wal::TableWAL;
+use crate::table_wal::{TableWAL,Log,TaskType};
 use crate::crc32::crc32;
 use crate::index::Index;
 
@@ -117,7 +117,9 @@ impl Tables{
             Some(t)=>t,
             None=>return Err(DbError::TableAbsent),
         };
-        table.insert(&mut self.index,row)?;
+        let id=table.insert(&mut self.index,row)?;
+        self.wal.add_log(TaskType::Insert,id,table_name)?;
+        table.lsn=self.wal.last_lsn;
         Ok(())
     }
 
@@ -145,7 +147,11 @@ impl Tables{
             None=>return Err(DbError::TableAbsent),
         };
         let deleted=table.delete(&mut self.index,conditions)?;
-        Ok(deleted)
+        for id in &deleted{
+            self.wal.add_log(TaskType::Delete,*id,table_name)?;
+        }
+        table.lsn=self.wal.last_lsn;
+        Ok(deleted.len())
     }
 
     pub fn shutdown(&mut self)->Result<(),DbError>{
@@ -497,16 +503,17 @@ impl Table{
         Ok(result)
     }
 
-    fn delete(&mut self,index:&mut Index,conditions:Vec<Condition>)->Result<usize,DbError>{
+    fn delete(&mut self,index:&mut Index,conditions:Vec<Condition>)->Result<Vec<u32>,DbError>{
         let rows=self.scan(index,conditions)?;
-        let num_deletions=rows.len();
+        let mut deletions:Vec<u32>=Vec::new();
         for (_,id) in rows{
             index.delete_record(id)?;
+            deletions.push(id);
             if let Some(pos) = self.records.iter().position(|r_id| *r_id == id) {
                 self.records.remove(pos);
             }
         }
-        Ok(num_deletions)
+        Ok(deletions)
     }
 
     fn update(&mut self,index:&mut Index,conditions:Vec<Condition>,updates:Vec<Condition>)->Result<usize,DbError>{
@@ -543,7 +550,7 @@ impl Table{
         }
         Ok(updated)
     }
-    fn insert(&mut self, index:&mut Index,row : Vec<(String,Value)>)->Result<(),DbError>{
+    fn insert(&mut self, index:&mut Index,row : Vec<(String,Value)>)->Result<u32,DbError>{
         let schema: HashMap<&String, DataTypes> =self.schema.iter().map(|(name, ty)| (name, *ty)).collect();
         let len=self.schema.len() as usize;
         let mut count:usize=0;
@@ -587,14 +594,15 @@ impl Table{
         }
         if count!=len{
             return Err(DbError::InsufficientParams);
-        }else{
-            let buf=Self::row_to_bytes(row);
-            let _=match index.write_record(&buf,buf.len()){
-                Ok(v)=>self.records.push(v),
-                Err(e)=>return Err(e),
-            };
         }
-        Ok(())
+        let buf=Self::row_to_bytes(row);
+        let _=match index.write_record(&buf,buf.len()){
+            Ok(v)=>{
+                self.records.push(v);
+                return Ok(v);
+            },
+            Err(e)=>return Err(e),
+        };
     }
 
     fn delete_table(&mut self,index : &mut Index,name:&String)->Result<(),DbError>{
