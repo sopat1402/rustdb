@@ -274,10 +274,35 @@ I have done serialising and deserialising. straightforward byte handling. made a
 
 for scan however, I'm getting O(N+C) where N is the number of columns and C is the number of conditions
 inter column comparison is not possible rn. with R records, O(R*(N+C)). That's slow but for now, even a functional
-scan is better than no scan at all. optimisation can come later.
+scan is better than no scan at all. optimisation can come later => with index trees.
 
+In my select function, I'm using a hash set basically to avoid O(n) lookups in a vector of columns to see if the row
+column is contained in that vector. small optimisation.
 
+I wrote delete after modifying scan to also give the record id bundled with the row. Straightforward.
 
+FUUUUUUUCK I realized the table layer needs a wal too. The wal.rs from the index is for the index as it deals with pages.
+the WAL for tables will be pretty straightforward as it just needs to know what table and what record id was inserted
+or deleted. the record id is a part of index. the table wal can be dealt with too. no biggie.
+
+but then the write to the index wal happens only after the table is done with its scan. 
+consider deletion or update. the table first determines what it is. now for insert, record id is known 
+as index.next_record_id. so that can go in the table WAL too.
+
+aaaah I just realised, a page still needs a log of what happened to it because say post update it gets corrupted, 
+a replay is needed. so calling update record id from the table wal won't be sufficient. 
+index level wal is still needed. I'd kms if I suffered so much for a useless WAL.
+
+K I need to add an 8 byte lsn to the table metadata but I'm not fucking complaining. Better than having to kms.
+
+magic = u32, checksum = u32, num records = u32, num columns = u16, next si no = u32, lsn = u64=> 26 byte header
+K I also added a file object to the LSN struct for its own wal and am checking to make sure when making a new log
+that a) such a table file doesn't exist and b) such a wal log doesn't exist.
+I'm going to first make table crud work before going into durability, but I have played these games before so
+it shouldn't be too hard. I only need to make insert,delete get logged anyways because only they cause a change
+in the table's state. I also made the index's wal's file size public so that I can sync the checkpoint of the index and
+table.
+K I needed to check and, my write function adds record id to the slot and not to the buffer.
 
 
 

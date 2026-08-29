@@ -1,4 +1,5 @@
 use std::os::unix::prelude::FileExt;
+use std::collections::HashSet;
 use std::fs::File;
 use std::vec::Vec;
 use std::collections::HashMap;
@@ -14,8 +15,11 @@ struct Table{
     records     :   Vec<u32>,
     schema      :   Vec<(String,DataTypes)>,
     next_si_no  :   u32,
+    lsn         :   u64,
+    wal         :   File,
 }
 
+#[derive(Copy,Clone)]
 #[repr(u16)]
 pub enum DataTypes{
     INT32,
@@ -77,18 +81,30 @@ pub struct Condition{
 }
 
 impl Table{
-    pub fn new(mut name : String,schema:Vec<(String,DataTypes)>)->Result<Self,DbError>{
-        name+=".table";
+    pub fn new(name : String,schema:Vec<(String,DataTypes)>,lsn:u64)->Result<Self,DbError>{
+        let mut f_name=name.clone();
+        f_name+=".table";
         let file=File::options()
             .read(true)
             .write(true)
             .create(true)
-            .open(name).map_err(|_| DbError::FileError)?;
+            .open(f_name).map_err(|_| DbError::FileError)?;
         let file_size=file.metadata().map_err(|_| DbError::FileError)?.len();
         if file_size!=0{
             return Err(DbError::TableNameExists);
         }
         let records:Vec<u32>=Vec::new();
+        let mut wal_name=name.clone();
+        wal_name+=".log";
+        let wal=File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(wal_name).map_err(|_| DbError::FileError)?;
+        let file_size=wal.metadata().map_err(|_| DbError::FileError)?.len();
+        if file_size!=0{
+            return Err(DbError::TableNameExists);
+        }
         Ok(
             Self{
                 file,
@@ -96,18 +112,26 @@ impl Table{
                 records,
                 schema,
                 next_si_no : 1,
+                lsn,
+                wal,
             }
         )
     }
 
     pub fn deserialise(mut name:String)->Result<Self,DbError>{
+        let mut fname=name.clone();
+        fname+=".log";
         name+=".table";
         let file=File::options()
             .read(true)
             .write(true)
             .open(name).map_err(|_| DbError::FileError)?;
+        let wal=File::options()
+            .read(true)
+            .write(true)
+            .open(fname).map_err(|_| DbError::FileError)?;
         let file_size=file.metadata().map_err(|_| DbError::FileError)?.len();
-        if file_size<18{
+        if file_size<26{
             return Err(DbError::CorruptedDataError);
         }
         let mut offset:usize=0;
@@ -121,6 +145,7 @@ impl Table{
         let size=u32::from_le_bytes(table[8..12].try_into().unwrap());
         let num_columns=u16::from_le_bytes(table[12..14].try_into().unwrap());
         let next_si_no=u32::from_le_bytes(table[14..18].try_into().unwrap());
+        let lsn=u64::from_le_bytes(table[18..26].try_into().unwrap());
         let z:u32=0;
         let zero_bytes=z.to_le_bytes();
         table[4..8].copy_from_slice(&zero_bytes);
@@ -131,7 +156,7 @@ impl Table{
         let checksum_bytes=checksum.to_le_bytes();
         table[4..8].copy_from_slice(&checksum_bytes);
         let mut schema:Vec<(String,DataTypes)>=Vec::new();
-        offset=18;
+        offset=26;
         for _ in 0..num_columns{
             let col_name_size=u16::from_le_bytes(table[offset..offset+2].try_into().unwrap());
             offset+=2;
@@ -165,17 +190,20 @@ impl Table{
                 records,
                 schema,
                 next_si_no,
+                lsn,
+                wal,
             }
         )
     }
 
     pub fn serialise(&mut self)->Result<(),DbError>{
-        let file_size =18+ self.schema.iter().map(|(name, _)| 2 + name.len() + 2).sum::<usize>()+ self.records.len() * 4;
+        let file_size =26 + self.schema.iter().map(|(name, _)| 2 + name.len() + 2).sum::<usize>()+ self.records.len() * 4;
         let mut table=vec![0u8;file_size as usize];
         let num_columns=self.schema.len();
-        let mut offset:usize=18;
+        let mut offset:usize=26;
         let magic=MAGIC;
         let magic_bytes=magic.to_le_bytes();
+        let lsn_bytes=self.lsn.to_le_bytes();
         self.size=self.records.len() as u32;
         let size_bytes=self.size.to_le_bytes();
         let num_columns_bytes=(num_columns as u16).to_le_bytes();
@@ -187,6 +215,7 @@ impl Table{
         table[8..12].copy_from_slice(&size_bytes);
         table[12..14].copy_from_slice(&num_columns_bytes);
         table[14..18].copy_from_slice(&next_si_bytes);
+        table[18..26].copy_from_slice(&lsn_bytes);
         for i in 0..num_columns{
             let (column_name,data_type)=&self.schema[i];
             let column_name_bytes=column_name.as_bytes();
@@ -259,8 +288,36 @@ impl Table{
         Ok(row)
     }
 
-    fn scan(&self, index:&mut Index, conditions : Vec<Condition>)->Result<Vec<Vec<(String,Value)>>,DbError>{
-        let mut rows:Vec<Vec<(String,Value)>>=Vec::new();
+    fn row_to_bytes(row : Vec<(String,Value)>)->Vec<u8>{
+        let mut v:Vec<u8>=Vec::new();
+        for (_,val) in row{
+            match val{
+                Value::Int32(value)=>{
+                    let v_bytes=value.to_be_bytes();
+                    v.extend(v_bytes);
+                },
+                Value::Uint32(value)=>{
+                    let v_bytes=value.to_le_bytes();
+                    v.extend(v_bytes);
+                },
+                Value::Float32(value)=>{
+                    let v_bytes=value.to_le_bytes();
+                    v.extend(v_bytes);
+                },
+                Value::Varchar(value)=>{
+                    let length=value.len() as u16;
+                    let length_bytes=length.to_le_bytes();
+                    v.extend(length_bytes);
+                    let v_bytes=value.as_bytes();
+                    v.extend(v_bytes);
+                },
+            };
+        }
+        v
+    }
+
+    fn scan(&self, index:&mut Index, conditions : Vec<Condition>)->Result<(Vec<(Vec<(String,Value)>,u32)>),DbError>{
+        let mut rows:Vec<(Vec<(String,Value)>,u32)>=Vec::new();
         'outer:for id in &self.records{
             let buf=index.get_record(*id).map_err(|_| DbError::CorruptedDataError)?;
             let row=self.extract(&buf)?;
@@ -281,8 +338,101 @@ impl Table{
                     continue 'outer;
                 }
             }
-            rows.push(row);
+            rows.push((row,*id));
         }
         Ok(rows)
+    }
+
+    pub fn select(&self,index:&mut Index, conditions : Vec<Condition>,cols : Vec<String>)->Result<Vec<Vec<(String,Value)>>,DbError>{
+        let rows=self.scan(index,conditions)?;
+        let mut result:Vec<Vec<(String,Value)>>=Vec::new();
+        let cols: HashSet<String> = cols.into_iter().collect();
+        for (row,_) in rows{
+            let mut r_row:Vec<(String,Value)>=Vec::new();
+            for col in row{
+                if cols.contains(&col.0){
+                    r_row.push(col);
+                }
+            }
+            result.push(r_row);
+        }
+        Ok(result)
+    }
+
+    pub fn delete(&mut self,index:&mut Index,conditions:Vec<Condition>)->Result<usize,DbError>{
+        let rows=self.scan(index,conditions)?;
+        let num_deletions=rows.len();
+        for (_,id) in rows{
+            index.delete_record(id)?;
+            if let Some(pos) = self.records.iter().position(|r_id| *r_id == id) {
+                self.records.remove(pos);
+            }
+        }
+        Ok(num_deletions)
+    }
+
+    pub fn update(&mut self,index:&mut Index,conditions:Vec<Condition>,updates:Vec<Condition>)->Result<usize,DbError>{
+        let rows=self.scan(index,conditions)?;
+        let updated=rows.len();
+        for (row,record_id) in rows{
+            let row_bytes=Table::row_to_bytes(row);
+            let size=row_bytes.len();
+            index.update_record(record_id,&row_bytes,size)?;
+        }
+        Ok(updated)
+    }
+
+    pub fn insert(&mut self, index:&mut Index,row : Vec<(String,Value)>)->Result<(),DbError>{
+        let schema: HashMap<&String, DataTypes> =self.schema.iter().map(|(name, ty)| (name, *ty)).collect();
+        let len=self.schema.len() as usize;
+        let mut count:usize=0;
+        for col in &row{
+            let (name,value)=col;
+            if schema.contains_key(&name){
+                let mut types=(0,0,0,0);
+                let mut vals=(0,0,0,0);
+                match value{
+                    Value::Int32(_)=>{
+                        vals=(1,0,0,0);
+                    },
+                    Value::Uint32(_)=>{
+                        vals=(0,1,0,0);
+                    },
+                    Value::Float32(_)=>{
+                        vals=(0,0,1,0);
+                    },
+                    Value::Varchar(_)=>{
+                        vals=(0,0,0,1);
+                    },
+                };
+                let d_type:&DataTypes=match schema.get(&name){
+                    Some(t)=>t,
+                    None=>return Err(DbError::CorruptedDataError),
+                };
+                match *d_type{
+                    DataTypes::INT32=>types=(1,0,0,0),
+                    DataTypes::UINT32=>types=(0,1,0,0),
+                    DataTypes::FLOAT32=>types=(0,0,1,0),
+                    DataTypes::VARCHAR=>types=(0,0,0,1),
+                };
+                if !matches!(types,vals){
+                    return Err(DbError::TypeMismatch);
+                }else{
+                    count+=1;
+                }
+            }else{
+                return Err(DbError::ColumnAbsent);
+            }
+        }
+        if count!=len{
+            return Err(DbError::InsufficientParams);
+        }else{
+            let buf=Self::row_to_bytes(row);
+            let _=match index.write_record(&buf,buf.len()){
+                Ok(v)=>self.records.push(v),
+                Err(e)=>return Err(e),
+            };
+        }
+        Ok(())
     }
 }
