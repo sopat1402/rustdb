@@ -25,20 +25,28 @@ async fn test() -> std::io::Result<()> {
 
     let addr = "127.0.0.1:5432";
 
-    println!("--- Select all ID and name ---");
-    let query = r#"{"table_name":"users","task":"select","columns":{"column":"id","column":"name"},"conditions":{}}"#;
+    println!("--- Make table users ---");
+    let query = r#"{"task":"create_table","table_name":"users","schema":{"column":"id","type":"UINT32","column":"name","type":"VARCHAR","column":"age","type":"UINT32"}}"#;
+    send_query(addr, query).await?;
+
+    println!("--- Insert a row ---");
+    let query = r#"{"table_name":"users","task":"insert","row":{"id":"1","name":"Sohum Pathak","age":"20"}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Select all columns ---");
+    println!("\n--- Select before update ---");
     let query = r#"{"table_name":"users","task":"select","columns":{},"conditions":{}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Select all columns ---");
+    println!("\n--- Update age ---");
+    let query = r#"{"table_name":"users","task":"update","conditions":{"column":"id","operator":"e","value":"1"},"updates":{"column":"age","value":"21"}}"#;
+    send_query(addr,query).await?;
+
+    println!("\n--- Select after update ---");
     let query = r#"{"table_name":"users","task":"select","columns":{},"conditions":{}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Shutdown ---");
-    let query=r#"{"task":"shutdown"}"#;
+    println!("\n--- Drop database ---");
+    let query = r#"{"task":"drop_db","db_name":"testdb"}"#;
     send_query(addr,query).await?;
 
     Ok(())
