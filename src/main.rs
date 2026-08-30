@@ -5,6 +5,7 @@ use std::fs::File;
 use rustdb::db_errors::DbError;
 use rustdb::index::Index;
 use rustdb::page::DatabaseFile;
+use rustdb::tables::{Condition,Value,Tables,Operator};
 
 
 fn bootup()->Result<Index,DbError>{
@@ -35,6 +36,21 @@ fn bootup()->Result<Index,DbError>{
         index.recover()?;
     }
     Ok(index)
+}
+
+fn display_rows(res:&Vec<Vec<(String,Value)>>){
+    for row in res{
+        for (col,value) in row{
+            print!("{col} : ");
+            match value{
+                Value::Uint32(v)=>print!("{v}, "),
+                Value::Int32(v)=>print!("{v}, "),
+                Value::Float32(v)=>print!("{v}, "),
+                Value::Varchar(v)=>print!("{v}, "),
+            };
+        }
+        print!("\n");
+    }
 }
 
 fn main(){

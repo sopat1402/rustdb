@@ -1,0 +1,249 @@
+use crate::tables::{Condition, Value, Operator,DataTypes};
+use std::collections::HashMap;
+use crate::db_errors::DbError;
+
+enum Token{
+    Key(String),
+    Value(String),
+}
+
+pub enum QueryOperation{
+    Insert,
+    Select,
+    Delete,
+    Update,
+    CreateTable,
+    DeleteTable,
+    DropDB,
+}
+
+pub struct Query{
+    table_name  :   String,
+    task        :   QueryOperation,
+    row         :   Option<Vec<(String,Value)>>,
+    columns     :   Option<Vec<String>>,
+    conditions  :   Option<Vec<Condition>>,
+    updates     :   Option<Vec<Condition>>,
+}
+
+fn lexer(query:String)->Result<Vec<Token>,DbError>{
+    let mut in_string:bool=false;
+    let mut buf=String::from("");
+    let mut is_escape=false;
+    let mut is_value=false;
+    let mut tokens:Vec<Token>=Vec::new();
+    for c in query.chars(){
+        if c=='"'{
+            if is_escape{
+                buf.push('"');
+                is_escape=false;
+            }else{
+                in_string=!in_string;
+                if buf.len()!=0{
+                    if is_value{
+                        tokens.push(Token::Value(buf.clone()));
+                    }else{
+                        tokens.push(Token::Key(buf.clone()));
+                    }
+                }
+                is_escape=false;
+                buf.clear();
+            }
+        }
+        else if c=='\\'{
+            if is_escape{
+                buf.push('\\');
+                is_escape=false;
+            }else{
+                is_escape=true;
+            }
+        }
+        else if c==':' && !in_string{
+            is_value=true;
+            continue;
+        }
+        else if (c=='}'||c==',') && !in_string{
+            is_value=false;
+            continue;
+        }
+        else if c=='{' && !in_string{
+            is_value=false;
+            continue;
+        }
+        else{
+            buf.push(c);
+        }
+    }
+    Ok(tokens)
+}
+
+fn next_value(tokens:&[Token], i:&mut usize)->Result<String,DbError>{
+    *i+=1;
+    match tokens.get(*i){
+        None | Some(Token::Key(_)) => Err(DbError::MalformedRequest),
+        Some(Token::Value(v)) => {
+            let v=v.clone();
+            *i+=1;
+            Ok(v)
+        }
+    }
+}
+
+fn parse_operation(op:&str)->Result<Operator,DbError>{
+    match op.to_lowercase().as_str(){
+        "ge"=>Ok(Operator::GreaterEqual),
+        "le"=>Ok(Operator::LessEqual),
+        "e"=>Ok(Operator::Equal),
+        "ne"=>Ok(Operator::NotEqual),
+        "l"=>Ok(Operator::Less),
+        "g"=>Ok(Operator::Greater),
+        _=>Err(DbError::InvalidOperation),
+    }
+}
+
+fn read_field_group(tokens:&[Token],i:&mut usize,expected_keys:&[&str],)->Result<HashMap<String,String>,DbError>{
+    let mut fields=HashMap::new();
+    while fields.len()<expected_keys.len() && *i<tokens.len(){
+        match &tokens[*i]{
+            Token::Key(k) if expected_keys.contains(&k.as_str()) => {
+                let key=k.clone();
+                let value=next_value(tokens,i)?;
+                fields.insert(key,value);
+            }
+            _ => break,
+        }
+    }
+    Ok(fields)
+}
+
+pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query,DbError>{
+    let tokens=lexer(query)?;
+    let mut table_name:Option<String>=None;
+    let mut task:Option<QueryOperation>=None;
+    let mut conditions:Option<Vec<Condition>>=None;
+    let mut updates:Option<Vec<Condition>>=None;
+    let mut row:Option<Vec<(String,Value)>>=None;
+    let mut columns:Option<Vec<String>>=None;
+    let mut i:usize=0;
+
+    while i<tokens.len(){
+        match &tokens[i]{
+            Token::Key(key) => {
+                match key.as_str(){
+                    "table_name" => {
+                        table_name=Some(next_value(&tokens,&mut i)?);
+                    }
+                    "task" => {
+                        let v=next_value(&tokens,&mut i)?.to_lowercase();
+                        task=Some(match v.as_str(){
+                            "insert"=>QueryOperation::Insert,
+                            "delete"=>QueryOperation::Delete,
+                            "update"=>QueryOperation::Update,
+                            "select"=>QueryOperation::Select,
+                            "drop_db"=>QueryOperation::DropDB,
+                            "delete_table"=>QueryOperation::DeleteTable,
+                            "create_table"=>QueryOperation::CreateTable,
+                            _=>return Err(DbError::InvalidOperation),
+                        });
+                    }
+                    "row" => {
+                        let mut row_vals:Vec<(String,Value)>=Vec::new();
+                        i+=1;
+                        let schema = schema.ok_or(DbError::InsufficientParams)?;
+                        while i<tokens.len(){
+                            match &tokens[i]{
+                                Token::Key(col) => {
+                                    let col=col.clone();
+                                    let raw=next_value(&tokens,&mut i)?;
+                                    let dtype=lookup_type(&schema,&col)?;
+                                    let val=coerce_value(&raw,dtype)?;
+                                    row_vals.push((col,val));
+                                }
+                                Token::Value(_) => break,
+                            }
+                        }
+                        row=Some(row_vals);
+                    }
+                    "conditions" => {
+                        i+=1;
+                        let schema = schema.ok_or(DbError::InsufficientParams)?;
+                        let fields=read_field_group(&tokens,&mut i,&["column","operator","value"])?;
+                        conditions=Some(vec![build_condition(fields,&schema)?]);
+                    }
+                    "updates" => {
+                        i+=1;
+                        let schema = schema.ok_or(DbError::InsufficientParams)?;
+                        let fields=read_field_group(&tokens,&mut i,&["column","value"])?;
+                        updates=Some(vec![build_condition(fields,&schema)?]);
+                    }
+                    "columns" => {
+                        let mut col_vals:Vec<String>=Vec::new();
+                        i+=1;
+                        while i<tokens.len(){
+                            match &tokens[i]{
+                                Token::Key(k) if k=="column" => {
+                                    let val=next_value(&tokens,&mut i)?;
+                                    col_vals.push(val);
+                                }
+                                _ => break,
+                            }
+                        }
+                        columns=Some(col_vals);
+                    }
+                    _ => {
+                        i+=1;
+                        if i<tokens.len(){
+                            if let Token::Value(_)=&tokens[i]{
+                                i+=1;
+                            }
+                        }
+                    }
+                }
+            }
+            Token::Value(_) => return Err(DbError::MalformedRequest),
+        }
+    }
+
+    Ok(Query{
+        table_name: table_name.ok_or(DbError::MalformedRequest)?,
+        task: task.ok_or(DbError::MalformedRequest)?,
+        row,
+        columns,
+        conditions,
+        updates,
+    })
+}
+
+fn coerce_value(raw:&str, dtype:&DataTypes)->Result<Value,DbError>{
+    match dtype{
+        DataTypes::UINT32 => raw.parse::<u32>()
+            .map(Value::Uint32)
+            .map_err(|_| DbError::TypeMismatch),
+        DataTypes::INT32 => raw.parse::<i32>()
+            .map(Value::Int32)
+            .map_err(|_| DbError::TypeMismatch),
+        DataTypes::FLOAT32 => raw.parse::<f32>()
+            .map(Value::Float32)
+            .map_err(|_| DbError::TypeMismatch),
+        DataTypes::VARCHAR => Ok(Value::Varchar(raw.to_string())),
+    }
+}
+
+fn lookup_type<'a>(schema:&'a [(String,DataTypes)], column:&str)->Result<&'a DataTypes,DbError>{
+    schema.iter()
+        .find(|(name,_)| name==column)
+        .map(|(_,dtype)| dtype)
+        .ok_or(DbError::InvalidColumn)
+}
+
+fn build_condition(fields:std::collections::HashMap<String,String>,schema:&[(String,DataTypes)],)->Result<Condition,DbError>{
+    let column=fields.get("column").ok_or(DbError::MalformedRequest)?.clone();
+    let raw_value=fields.get("value").ok_or(DbError::MalformedRequest)?;
+    let dtype=lookup_type(schema,&column)?;
+    let value=coerce_value(raw_value,dtype)?;
+    let operator=match fields.get("operator"){
+        Some(op)=>parse_operation(op)?,
+        None=>Operator::Equal,
+    };
+    Ok(Condition{ column, value, operator })
+}

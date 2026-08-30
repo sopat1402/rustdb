@@ -198,6 +198,33 @@ impl fmt::Display for TypeMismatch {
 impl std::error::Error for TypeMismatch {}
 
 #[derive(Debug)]
+pub struct MalformedRequest;
+impl fmt::Display for MalformedRequest {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Bad request.")
+    }
+}
+impl std::error::Error for MalformedRequest {}
+
+#[derive(Debug)]
+pub struct InvalidOperation;
+impl fmt::Display for InvalidOperation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such operation")
+    }
+}
+impl std::error::Error for InvalidOperation {}
+
+#[derive(Debug)]
+pub struct InvalidColumn;
+impl fmt::Display for InvalidColumn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such column")
+    }
+}
+impl std::error::Error for InvalidColumn {}
+
+#[derive(Debug)]
 pub enum DbError{
     RecordMismatch,
     SpaceOver,
@@ -219,4 +246,7 @@ pub enum DbError{
     InvalidComparison,
     TypeMismatch,
     TableAbsent,
+    MalformedRequest,
+    InvalidOperation,
+    InvalidColumn,
 }

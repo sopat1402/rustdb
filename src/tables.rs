@@ -17,6 +17,23 @@ pub struct Tables{
     wal     :   TableWAL,
 }
 
+#[derive(Copy,Clone)]
+#[repr(u16)]
+pub enum DataTypes{
+    INT32,
+    UINT32,
+    FLOAT32,
+    VARCHAR,
+}
+
+#[derive(PartialEq,Debug,Clone)]
+pub enum Value {
+    Int32(i32),
+    Uint32(u32),
+    Float32(f32),
+    Varchar(String),
+}
+
 impl Tables{
     pub fn bootup()->Result<Self,DbError>{
         let file=File::options()
@@ -273,22 +290,7 @@ struct Table{
     lsn             :   u64,
 }
 
-#[derive(Copy,Clone)]
-#[repr(u16)]
-pub enum DataTypes{
-    INT32,
-    UINT32,
-    FLOAT32,
-    VARCHAR,
-}
 
-#[derive(PartialEq,Debug,Clone)]
-pub enum Value {
-    Int32(i32),
-    Uint32(u32),
-    Float32(f32),
-    Varchar(String),
-}
 
 impl Value {
     fn compare(&self, other: &Value) -> Result<std::cmp::Ordering, DbError> {
