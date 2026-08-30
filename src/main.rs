@@ -23,8 +23,10 @@ async fn main() -> Result<(), DbError> {
     }else{
         (db,handle) = Database::new(args.db_name)?;
     }
-    tokio::spawn(async move {
+    let _db_task = tokio::spawn(async move {
         db.run().await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::process::exit(0);
     });
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await
         .map_err(|_| DbError::FileError)?;

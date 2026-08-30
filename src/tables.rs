@@ -414,7 +414,7 @@ impl Table{
         for _ in 0..num_columns{
             let col_name_size=u16::from_le_bytes(table[offset..offset+2].try_into().map_err(|_| DbError::CorruptedDataError)?);
             offset+=2;
-            if col_name_size as u64+offset as u64+2>=file_size{
+            if col_name_size as u64+offset as u64>=file_size{
                 return Err(DbError::CorruptedDataError);
             }
             let mut col_name_bytes=vec![0u8;col_name_size as usize];

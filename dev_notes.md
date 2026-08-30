@@ -419,13 +419,35 @@ FIXED IT!! I made jobs be string queries not query objects. smaller too ig. Then
 way, errors are returned quite nicely too. Single threaded fix. Also as a plus, a user can now get the schema of a
 table.
 
-# Final Bugs
+# Bugs and Fixes
 
 I forgot that my table was inserting SI. So, now I changed the offset to 4 in extract and am also adding the SI column.
 The case in select where cols is empty also adds SI. Update needed to add SI at the start because row_to_bytes is
 ignorant.
 
 Also, I had a typo that wrote i32 as big endian bytes in row_to_bytes. One letter but serious corruption.
+
+Shutdown is killing the spawned task but not the entire server itself. Also, insert for a good query gives 
+insufficient params. When I killed the process from tokio::spawn, it caused a race so I'm making it sleep for 100ms
+before killing the process. It worked.
+
+Insert giving insufficient params was just a bad test query.
+
+Select was giving a malformed request for empty conditions, so I instead just made it check if fields is empty in
+parser and if it is, put conditions as an empty vector, in which case my tables handles it pretty well.
+
+Booting the database after a successful delete of all rows gave a corrupted data error. I have traced it to 
+deserialise table. I'll try recreating the series of events. I cleared the table.
+
+AHHAHA I found the sequence. Deleting all the rows causes the corrupted data error. I traced it to the magic bytes.
+How the fuck do magic bytes get fucked with lol. The users.table I tested on still says 2c 0f 01 00 which 
+is00x00010f2c which is 69420, which is what I set my magic too. Maybe it's a directory issue? NVM the issue isn't with
+the magic. 
+- I found the actual bug. In my columns iteration, in table deserialise when building the schema vector from the
+    file, I was checking if col_name_size+offset+2>=file_size despite doing offset+2 before that. So if there are no
+    records, it does reach the end of the file. The test does work now.
+
+
 
 
 

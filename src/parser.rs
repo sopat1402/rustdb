@@ -267,7 +267,11 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                         i+=1;
                         let schema = schema.ok_or(DbError::InsufficientParams)?;
                         let fields=read_field_group(&tokens,&mut i,&["column","operator","value"])?;
-                        conditions=Some(vec![build_condition(fields,&schema)?]);
+                        if fields.is_empty(){
+                            conditions=Some(Vec::new());
+                        }else{
+                            conditions=Some(vec![build_condition(fields,&schema)?]);
+                        }
                     }
                     "updates" => {
                         i+=1;
