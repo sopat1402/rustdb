@@ -15,15 +15,28 @@ pub enum QueryOperation{
     CreateTable,
     DeleteTable,
     DropDB,
+    CreateDB,
 }
 
 pub struct Query{
-    table_name  :   String,
-    task        :   QueryOperation,
-    row         :   Option<Vec<(String,Value)>>,
-    columns     :   Option<Vec<String>>,
-    conditions  :   Option<Vec<Condition>>,
-    updates     :   Option<Vec<Condition>>,
+    pub table_name  :   Option<String>,
+    pub db_name     :   Option<String>,
+    pub task        :   QueryOperation,
+    pub row         :   Option<Vec<(String,Value)>>,
+    pub columns     :   Option<Vec<String>>,
+    pub conditions  :   Option<Vec<Condition>>,
+    pub updates     :   Option<Vec<Condition>>,
+    pub schema      :   Option<Vec<(String,DataTypes)>>,
+}
+
+fn parse_data_type(raw:&str)->Result<DataTypes,DbError>{
+    match raw.to_uppercase().as_str(){
+        "UINT32"=>Ok(DataTypes::UINT32),
+        "INT32"=>Ok(DataTypes::INT32),
+        "FLOAT32"=>Ok(DataTypes::FLOAT32),
+        "VARCHAR"=>Ok(DataTypes::VARCHAR),
+        _=>Err(DbError::TypeMismatch),
+    }
 }
 
 fn lexer(query:String)->Result<Vec<Token>,DbError>{
@@ -125,6 +138,8 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
     let mut row:Option<Vec<(String,Value)>>=None;
     let mut columns:Option<Vec<String>>=None;
     let mut i:usize=0;
+    let mut db_name:Option<String>=None;
+    let mut schema_ret:Option<Vec<(String,DataTypes)>>=None;
 
     while i<tokens.len(){
         match &tokens[i]{
@@ -132,6 +147,9 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                 match key.as_str(){
                     "table_name" => {
                         table_name=Some(next_value(&tokens,&mut i)?);
+                    }
+                    "db_name"=>{
+                        db_name=Some(next_value(&tokens,&mut i)?);
                     }
                     "task" => {
                         let v=next_value(&tokens,&mut i)?.to_lowercase();
@@ -143,6 +161,7 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                             "drop_db"=>QueryOperation::DropDB,
                             "delete_table"=>QueryOperation::DeleteTable,
                             "create_table"=>QueryOperation::CreateTable,
+                            "create_db"=>QueryOperation::CreateDB,
                             _=>return Err(DbError::InvalidOperation),
                         });
                     }
@@ -190,6 +209,21 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                         }
                         columns=Some(col_vals);
                     }
+                    "schema" => {
+                        let mut schema_vals:Vec<(String,DataTypes)>=Vec::new();
+                        i+=1;
+                        loop{
+                            let fields=read_field_group(&tokens,&mut i,&["column","type"])?;
+                            if fields.is_empty(){
+                                break;
+                            }
+                            let col=fields.get("column").ok_or(DbError::MalformedRequest)?.clone();
+                            let raw_type=fields.get("type").ok_or(DbError::MalformedRequest)?;
+                            let dtype=parse_data_type(raw_type)?;
+                            schema_vals.push((col,dtype));
+                        }
+                        schema_ret=Some(schema_vals);
+                    }
                     _ => {
                         i+=1;
                         if i<tokens.len(){
@@ -205,12 +239,14 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
     }
 
     Ok(Query{
-        table_name: table_name.ok_or(DbError::MalformedRequest)?,
+        table_name,
+        db_name,
         task: task.ok_or(DbError::MalformedRequest)?,
         row,
         columns,
         conditions,
         updates,
+        schema:schema_ret,
     })
 }
 

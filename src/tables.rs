@@ -150,12 +150,12 @@ impl Tables{
         Ok(res)
     }
 
-    pub fn update(&mut self, table_name:&String,conditions:Vec<Condition>,changes:Vec<Condition>)->Result<usize,DbError>{
+    pub fn update(&mut self, table_name:&String,conditions:Vec<Condition>,updates:Vec<Condition>)->Result<usize,DbError>{
         let table=match self.tables.get_mut(table_name){
             Some(t)=>t,
             None=>return Err(DbError::TableAbsent),
         };
-        let updated=table.update(&mut self.index,conditions,changes)?;
+        let updated=table.update(&mut self.index,conditions,updates)?;
         self.checkpoint(false)?;
         Ok(updated)
     }

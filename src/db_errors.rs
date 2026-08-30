@@ -225,6 +225,33 @@ impl fmt::Display for InvalidColumn {
 impl std::error::Error for InvalidColumn {}
 
 #[derive(Debug)]
+pub struct DBExists;
+impl fmt::Display for DBExists {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Database exists")
+    }
+}
+impl std::error::Error for DBExists {}
+
+#[derive(Debug)]
+pub struct DBAbsent;
+impl fmt::Display for DBAbsent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Database doesn't exist")
+    }
+}
+impl std::error::Error for DBAbsent {}
+
+#[derive(Debug)]
+pub struct QueueClosed;
+impl fmt::Display for QueueClosed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Queue is full")
+    }
+}
+impl std::error::Error for QueueClosed {}
+
+#[derive(Debug)]
 pub enum DbError{
     RecordMismatch,
     SpaceOver,
@@ -249,4 +276,7 @@ pub enum DbError{
     MalformedRequest,
     InvalidOperation,
     InvalidColumn,
+    DBExists,
+    DBAbsent,
+    QueueClosed,
 }

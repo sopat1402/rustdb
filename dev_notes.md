@@ -368,3 +368,26 @@ other operations, the total time can be taken as 203ms with the network latency 
 crashing then are 20μs/203ms which is about 1/10,000 or 0.01%. So, there's a 0.01% chance of a crash occuring
 in that window, in which case a user's inserted value won't be in the database. If a database crashes, I suppose
 they ought to recheck then.
+
+# JSON Parser
+
+Ugh this is so boring. First a lexer that makes tokens. I don't need a tree or any general JSON parsing BS since
+I can map it directly to my structs. Fuck serde. A parser just checks if the values needed are there. Iteratively.
+Returns a query object. This parser will be called on the network layer. Straightforward, I won't explain it much.
+BTW there's a bunch of private helper functions for the parser I added.
+
+# Database layer
+
+This layer brings the tables and the network interface together. Using tokio oneshot, I'm making a channel for
+every sender so that I won't need a special table to see who to send what to. 
+I'm using mpsc for the queue and stuff. FIFO, send it there, it then calls execute, which will return a QueryResult
+enum on success, DbError on failure. 
+
+😭 I was so happy moving little endian bytes around. This is abstraction hell. I had to read so much and it still
+feels hairy.
+
+
+
+
+
+

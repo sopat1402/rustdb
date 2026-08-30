@@ -10,3 +10,4 @@ pub mod wal;
 pub mod tables;
 pub mod table_wal;
 pub mod parser;
+pub mod database;
