@@ -26,6 +26,7 @@ pub struct DatabaseHandle{
 
 pub enum QueryResult{
     Success,
+    Dropped,
     Count(usize),
     Rows(Vec<Vec<(String,Value)>>),
 }
@@ -87,7 +88,11 @@ impl Database{
     pub async fn run(&mut self){
         while let Some(job) = self.rx.recv().await{
             let result = self.execute(job.query);
+            let killed=matches!(result,Ok(QueryResult::Dropped));
             let _ = job.respond_to.send(result);
+            if killed{
+                break;
+            }
         }
     }
 
@@ -105,29 +110,31 @@ impl Database{
                 return Ok(QueryResult::Success);
             },
             QueryOperation::CreateDB=>{
+                set_current_dir("..").map_err(|_| DbError::FileError)?;
                 let db_name=query.db_name.ok_or(DbError::InsufficientParams)?;
                 Self::new(db_name)?;
+                let mut route=String::from("../");
+                route.push_str(self.name.as_str());
+                set_current_dir(&route).map_err(|_| DbError::FileError)?;
                 return Ok(QueryResult::Success);
             },
             QueryOperation::DropDB=>{
                 let db_name=query.db_name.ok_or(DbError::InsufficientParams)?;
+                let is_self=db_name==self.name;
+
                 let mut route=String::from("../");
                 route.push_str(db_name.as_str());
                 let path=Path::new(&route);
                 if !path.is_dir(){
                     return Err(DbError::DBAbsent);
                 }
-                set_current_dir(&route).map_err(|_| DbError::FileError)?;
-                let output=Command::new("bash")
-                    .arg("./../cleanup.sh")
-                    .output()
-                    .expect("fail");
-                if !output.status.success(){
-                    return Err(DbError::FileError);
+                std::fs::remove_dir_all(&route).map_err(|_| DbError::FileError)?;
+                if is_self{
+                    set_current_dir("..").map_err(|_| DbError::FileError)?;
+                    return Ok(QueryResult::Dropped);
+                } else {
+                    return Ok(QueryResult::Success);
                 }
-                set_current_dir("..").map_err(|_| DbError::FileError)?;
-                remove_dir(&db_name).map_err(|_| DbError::FileError)?;
-                return Ok(QueryResult::Success);
             },
             QueryOperation::Insert=>{
                 let table_name=query.table_name.ok_or(DbError::InsufficientParams)?;
