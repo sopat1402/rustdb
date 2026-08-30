@@ -507,7 +507,9 @@ impl Table{
 
     fn extract(&self,buf:&[u8])->Result<Vec<(String,Value)>,DbError>{
         let mut row:Vec<(String,Value)>=Vec::new();
-        let mut offset=0;
+        let si=u32::from_le_bytes(buf[0..4].try_into().map_err(|_| DbError::CorruptedDataError)?);
+        row.push((String::from("SI"),Value::Uint32(si)));
+        let mut offset=4;
         for col in &self.schema{
             let (col_name,data_type)=col;
             let cname=col_name.clone();
@@ -546,7 +548,7 @@ impl Table{
         for (_,val) in row{
             match val{
                 Value::Int32(value)=>{
-                    let v_bytes=value.to_be_bytes();
+                    let v_bytes=value.to_le_bytes();
                     v.extend(v_bytes);
                 },
                 Value::Uint32(value)=>{
@@ -616,6 +618,7 @@ impl Table{
             for (col_name,_) in &self.schema{
                 cols.push(col_name.clone());
             }
+            cols.push(String::from("SI"));
         }
         let cols: HashSet<String> = cols.into_iter().collect();
         for (row,_) in rows{
@@ -648,7 +651,12 @@ impl Table{
         let updated=rows.len();
         for (row,record_id) in rows{
             let mut new_row:Vec<(String,Value)>=Vec::new();
+            let mut si:Value=Value::Uint32(0);
             for (col_name,value) in row{
+                if col_name=="SI"{
+                    si=value.clone();
+                    continue;
+                }
                 let mut new_value=value;
                 for update in &updates{
                     if update.column==col_name{
@@ -672,7 +680,10 @@ impl Table{
                 }
                 new_row.push((col_name,new_value));
             }
-            let buf=Self::row_to_bytes(new_row);
+            let mut nr:Vec<(String,Value)>=Vec::new();
+            nr.push((String::from("SI"),si));
+            nr.extend(new_row);
+            let buf=Self::row_to_bytes(nr);
             index.update_record(record_id,&buf,buf.len())?;
         }
         Ok(updated)

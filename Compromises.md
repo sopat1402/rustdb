@@ -19,10 +19,11 @@ The total time is now 200.285 ms. That's around a 0.5% improvement. Granted, thi
 here is that a bulk of the delay is due to network latency. So for high workloads, MVCC is definitely needed for
 concurrency but until then, my database is async compatible.
 
-# 2) No Query Language
+# 2) JSON Query Interface
 
 v1 of this database does not implement SQL even though it is a relational database. Queries are made using
-JSON in a socket through the network layer.
+JSON in a socket through the network layer. I wrote the JSON parser. It doesn't make a tree. It converts it 
+directly to the structs I need. I'm not trying to make a library.
 
 # 3) No joins, aliases or indices
 
@@ -69,3 +70,7 @@ crashing then are 20μs/203ms which is about 1/10,000 or 0.01%. So, there's a 0.
 in that window, in which case a user's inserted value won't be in the database. If a database crashes, I suppose
 they ought to recheck then. The above assumption holds if crashes were evenly distributed, which they aren't. You get
 the idea, it's unlikely.
+
+In case that paragraph is confusing, good. Ignore it. I was just trying to say, a crash in that window is unlikely but
+in databases we have to consider possibility and not probability. The durability is faulty but since this architecture
+was mostly me making it up as I go along (as my dev notes will prove), I'm still pretty proud of it.

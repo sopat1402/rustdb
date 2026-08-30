@@ -234,7 +234,7 @@ edit page metadata wherever I forgot. K I fixed it.
 Found another bug : recover's write was trying to take a cached free page, which would naturally give
 spaceover. Fixed it, standard code from the other branch.
 
-Holy shit I realised I forgot to make the tree get serialised when doing checkpoint and revover while writing my
+Holy shit I realised I forgot to make the tree get serialised when doing checkpoint and recover while writing my
 compromises. Whoo glad I caught that. I was like, "Wait a fucking minute."
 
 # Table layer
@@ -419,7 +419,13 @@ FIXED IT!! I made jobs be string queries not query objects. smaller too ig. Then
 way, errors are returned quite nicely too. Single threaded fix. Also as a plus, a user can now get the schema of a
 table.
 
+# Final Bugs
 
+I forgot that my table was inserting SI. So, now I changed the offset to 4 in extract and am also adding the SI column.
+The case in select where cols is empty also adds SI. Update needed to add SI at the start because row_to_bytes is
+ignorant.
+
+Also, I had a typo that wrote i32 as big endian bytes in row_to_bytes. One letter but serious corruption.
 
 
 
