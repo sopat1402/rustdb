@@ -9,6 +9,13 @@ It is single threaded but accepts concurrent requests using Tokio's mpsc.
 >READ THE dev_notes.md. However vulgar they may seem, I documented my thought process there.
 >Also read Compromises.md to see by detailed explanation of the tradeoffs in this project.
 
+## Executable usage
+
+do ./rustdb <db_name> <port - default 5432> --new (optional)
+
+the --new flag is added only when a new database is needed. Mind you, you can do database CRUD from requests too,
+this is only to start the actual server and it'll need a database to bind to.
+
 ## Features
 
 - Slotted pages
