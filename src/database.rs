@@ -2,10 +2,9 @@ use crate::parser::{parse,Query,QueryOperation,peek_table_name};
 use crate::tables::{Tables,Value,DataTypes};
 use crate::db_errors::DbError;
 use std::path::Path;
-use std::fs::{create_dir,remove_dir};
+use std::fs::{create_dir,remove_dir_all};
 use std::env::set_current_dir;
 use tokio::sync::{mpsc,oneshot};
-use std::process::Command;
 
 const QUEUE_CAPACITY:usize=800;
 
@@ -142,7 +141,7 @@ impl Database{
                 if !path.is_dir(){
                     return Err(DbError::DBAbsent);
                 }
-                std::fs::remove_dir_all(&route).map_err(|_| DbError::FileError)?;
+                remove_dir_all(&route).map_err(|_| DbError::FileError)?;
                 if is_self{
                     set_current_dir("..").map_err(|_| DbError::FileError)?;
                     return Ok(QueryResult::Killed);

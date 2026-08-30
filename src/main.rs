@@ -1,15 +1,15 @@
 use clap::Parser;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt,AsyncWriteExt};
 use rustdb::db_errors::DbError;
 use rustdb::database::{Database,DatabaseHandle};
-use rustdb::parser::{Query,QueryOperation,encode_query_result,encode_error};
+use rustdb::parser::{encode_query_result,encode_error};
 
 #[derive(Parser)]
 struct Args {
     db_name: String,
     #[arg(default_value_t = 5432)]
     port: u16,
-    #[arg(default_value_t=false)]
+    #[arg(long,default_value_t=false)]
     new: bool,
 }
 
@@ -28,7 +28,7 @@ async fn main() -> Result<(), DbError> {
     });
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await
         .map_err(|_| DbError::FileError)?;
-
+    println!("Started server on port {}",args.port);
     loop {
         let (socket, _addr) = match listener.accept().await{
             Ok(pair)=>pair,
@@ -88,7 +88,6 @@ async fn handle_connection(mut socket: tokio::net::TcpStream, handle: DatabaseHa
 }
 
 async fn write_response(socket: &mut tokio::net::TcpStream, result: Result<&[u8], &str>) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
     let (status, body): (u8, &[u8]) = match result {
         Ok(b) => (0, b),
         Err(msg) => (1, msg.as_bytes()),

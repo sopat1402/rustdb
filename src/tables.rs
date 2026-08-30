@@ -4,7 +4,7 @@ use std::fs::File;
 use std::vec::Vec;
 use std::collections::HashMap;
 use crate::db_errors::DbError;
-use crate::table_wal::{TableWAL,Log,TaskType};
+use crate::table_wal::{TableWAL,TaskType};
 use crate::crc32::crc32;
 use crate::index::Index;
 
@@ -12,7 +12,7 @@ const MAGIC : u32=69420;
 
 pub struct Tables{
     file    :   File,
-    pub tables  :   HashMap<String,Table>,
+    tables  :   HashMap<String,Table>,
     index   :   Index,
     wal     :   TableWAL,
 }
@@ -254,7 +254,6 @@ impl Tables{
                 let table=match self.tables.get_mut(&table_name){
                     Some(t)=>t,
                     None=>{
-                        //deleted table?
                         entry=self.wal.get_log_any(Some(iterator))?;
                         continue;
                     },
