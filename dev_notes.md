@@ -308,6 +308,8 @@ K I needed to check and, my write function adds record id to the slot and not to
 
 Update is incomplete because I was doing condition.value.cmp(value). Fixed it in scan. Yayy CRUD test passed.
 
+The table inserts next si no into the record.
+
 # Table WAL
 
 How often to checkpoint my table wal? index wal checkpoint is based on size but that has all 4 operations put in there.
@@ -385,6 +387,37 @@ enum on success, DbError on failure.
 
 😭 I was so happy moving little endian bytes around. This is abstraction hell. I had to read so much and it still
 feels hairy.
+
+Whatever I made the CRUD routes. For drop DB, if the same db is dropped, it returns a kill signal dropped, on which
+the run loop is broken.
+
+# Network layer
+
+Using tokio for a tcp server, added clap as a dependency for easy command line arg parsing. Nothing cool about
+parsing your own command line args, kids.
+
+OMG fuck me now I have to build data frames for TCP data.
+I realised I forgot to add a shutdown path for the whole thing so I went and did that now. In both parser and database.
+
+there's a new flag being taken if it's a new database. default is false in which case there's a bootup. if new,
+there's Database::new.
+
+Ok the rest of the code for handle connection was pretty light tbh. big endian on network stuff. k. also i'm using
+read_exact on the tcp byte stream because there's no fixed size and it's frame stuff, I hate it. The rest was just
+converting my results to the stuff that the user needs and sending it back.
+
+For now, my result calls debug on the query result and sends it but that's a placeholder, I even marked it in the
+code so that I don't forget. K I added an encode to json method in parser.rs. Now, I'm changing database.rs and tables
+so that when cols in none, send an empty array and when the cols are empty in select, build the cols from the
+schema with all cols. K I'm also encoding errors but using debug because it's small. That's done.
+
+However, rn my parser will return error for query because the schema isn't given... I added a get schema thing but
+decided fuck that because it will use the queue. instead i'll make the database copy all the schemas of the tables into
+a map. NVM that would need mutexes and create table will fuck it.
+
+FIXED IT!! I made jobs be string queries not query objects. smaller too ig. Then in execute the thing is parsed. That
+way, errors are returned quite nicely too. Single threaded fix. Also as a plus, a user can now get the schema of a
+table.
 
 
 

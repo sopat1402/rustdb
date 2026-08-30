@@ -12,7 +12,7 @@ const MAGIC : u32=69420;
 
 pub struct Tables{
     file    :   File,
-    tables  :   HashMap<String,Table>,
+    pub tables  :   HashMap<String,Table>,
     index   :   Index,
     wal     :   TableWAL,
 }
@@ -104,6 +104,16 @@ impl Tables{
         self.file.write_all_at(&mut name_buf,size).map_err(|_| DbError::FileError)?;
         self.file.sync_all().map_err(|_| DbError::FileError)?;
         Ok(())
+    }
+
+    pub fn get_schema(&self,name:Option<String>)->Result<Vec<(String,DataTypes)>,DbError>{
+        let name=name.ok_or(DbError::TableAbsent)?;
+        let table:&Table=match self.tables.get(&name){
+            Some(t)=>t,
+            None=>return Err(DbError::TableAbsent),
+        };
+        let s=table.schema.clone();
+        Ok(s)
     }
 
     pub fn delete_table(&mut self,name:String)->Result<(),DbError>{
@@ -600,9 +610,14 @@ impl Table{
         Ok(rows)
     }
 
-    fn select(&mut self,index:&mut Index, conditions : Vec<Condition>,cols : Vec<String>)->Result<Vec<Vec<(String,Value)>>,DbError>{
+    fn select(&mut self,index:&mut Index, conditions : Vec<Condition>,mut cols : Vec<String>)->Result<Vec<Vec<(String,Value)>>,DbError>{
         let rows=self.scan(index,conditions)?;
         let mut result:Vec<Vec<(String,Value)>>=Vec::new();
+        if cols.len()==0{
+            for (col_name,_) in &self.schema{
+                cols.push(col_name.clone());
+            }
+        }
         let cols: HashSet<String> = cols.into_iter().collect();
         for (row,_) in rows{
             let mut r_row:Vec<(String,Value)>=Vec::new();

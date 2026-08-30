@@ -67,4 +67,5 @@ page after which the sync is done once the page is acquired, as calculated befor
 other operations, the total time can be taken as 203ms with the network latency factored in. The odds of a database
 crashing then are 20μs/203ms which is about 1/10,000 or 0.01%. So, there's a 0.01% chance of a crash occuring
 in that window, in which case a user's inserted value won't be in the database. If a database crashes, I suppose
-they ought to recheck then.
+they ought to recheck then. The above assumption holds if crashes were evenly distributed, which they aren't. You get
+the idea, it's unlikely.

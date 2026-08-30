@@ -1,4 +1,5 @@
 use crate::tables::{Condition, Value, Operator,DataTypes};
+use crate::database::QueryResult;
 use std::collections::HashMap;
 use crate::db_errors::DbError;
 
@@ -16,6 +17,8 @@ pub enum QueryOperation{
     DeleteTable,
     DropDB,
     CreateDB,
+    Shutdown,
+    GetSchema,
 }
 
 pub struct Query{
@@ -129,6 +132,82 @@ fn read_field_group(tokens:&[Token],i:&mut usize,expected_keys:&[&str],)->Result
     Ok(fields)
 }
 
+fn escape_json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn encode_value(value: &Value) -> String {
+    match value {
+        Value::Uint32(v) => v.to_string(),
+        Value::Int32(v) => v.to_string(),
+        Value::Float32(v) => v.to_string(),
+        Value::Varchar(v) => format!("\"{}\"", escape_json_string(v)),
+    }
+}
+
+pub fn encode_error(err: &DbError) -> String {
+    format!(
+        "{{\"success\":false,\"error\":\"{}\"}}",
+        escape_json_string(&format!("{err:?}"))
+    )
+}
+
+pub fn encode_query_result(result: &QueryResult) -> String {
+    match result {
+        QueryResult::Success => {
+            "{\"success\":true,\"type\":\"success\"}".to_string()
+        }
+        QueryResult::Killed => {
+            "{\"success\":true,\"type\":\"success\"}".to_string()
+        }
+        QueryResult::Count(c) => {
+            format!("{{\"success\":true,\"type\":\"count\",\"count\":{c}}}")
+        }
+        QueryResult::Rows(rows) => {
+            let rows_json: Vec<String> = rows.iter().map(|row| {
+                let fields: Vec<String> = row.iter().map(|(col, val)| {
+                    format!(
+                        "{{\"column\":\"{}\",\"value\":{}}}",
+                        escape_json_string(col),
+                        encode_value(val)
+                    )
+                }).collect();
+                format!("[{}]", fields.join(","))
+            }).collect();
+            format!(
+                "{{\"success\":true,\"type\":\"rows\",\"rows\":[{}]}}",
+                rows_json.join(",")
+            )
+        }
+        _=>return String::from("you peeked already"),
+    }
+}
+
+pub fn peek_table_name(query: &str) -> Result<Option<String>, DbError>{
+    let tokens = lexer(query.to_string())?;
+    for i in 0..tokens.len(){
+        if let Token::Key(k) = &tokens[i]{
+            if k == "table_name"{
+                if let Some(Token::Value(v)) = tokens.get(i+1){
+                    return Ok(Some(v.clone()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query,DbError>{
     let tokens=lexer(query)?;
     let mut table_name:Option<String>=None;
@@ -162,6 +241,7 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                             "delete_table"=>QueryOperation::DeleteTable,
                             "create_table"=>QueryOperation::CreateTable,
                             "create_db"=>QueryOperation::CreateDB,
+                            "shutdown"=>QueryOperation::Shutdown,
                             _=>return Err(DbError::InvalidOperation),
                         });
                     }

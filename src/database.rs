@@ -1,5 +1,5 @@
-use crate::parser::{Query,QueryOperation};
-use crate::tables::{Tables,Value};
+use crate::parser::{parse,Query,QueryOperation,peek_table_name};
+use crate::tables::{Tables,Value,DataTypes};
 use crate::db_errors::DbError;
 use std::path::Path;
 use std::fs::{create_dir,remove_dir};
@@ -7,10 +7,10 @@ use std::env::set_current_dir;
 use tokio::sync::{mpsc,oneshot};
 use std::process::Command;
 
-const QUEUE_CAPACITY:usize=8;
+const QUEUE_CAPACITY:usize=800;
 
 struct Job{
-    query       :   Query,
+    query       :   String,
     respond_to  :   oneshot::Sender<Result<QueryResult, DbError>>
 }
 
@@ -20,19 +20,21 @@ pub struct Database{
     rx          :   mpsc::Receiver<Job>,
 }
 
+#[derive(Clone)]
 pub struct DatabaseHandle{
     tx: mpsc::Sender<Job>,
 }
 
 pub enum QueryResult{
     Success,
-    Dropped,
+    Killed,
     Count(usize),
     Rows(Vec<Vec<(String,Value)>>),
+    Schema(Vec<(String,DataTypes)>),
 }
 
 impl DatabaseHandle{
-    pub async fn submit_job(&self, query: Query) -> Result<QueryResult, DbError>{
+    pub async fn submit_job(&self, query: String) -> Result<QueryResult, DbError>{
         let (resp_tx, resp_rx) = oneshot::channel();
         let job = Job{ query, respond_to: resp_tx };
         self.tx.send(job).await.map_err(|_| DbError::QueueClosed)?;
@@ -88,7 +90,7 @@ impl Database{
     pub async fn run(&mut self){
         while let Some(job) = self.rx.recv().await{
             let result = self.execute(job.query);
-            let killed=matches!(result,Ok(QueryResult::Dropped));
+            let killed=matches!(result,Ok(QueryResult::Killed));
             let _ = job.respond_to.send(result);
             if killed{
                 break;
@@ -96,8 +98,20 @@ impl Database{
         }
     }
 
-    fn execute(&mut self, query:Query)->Result<QueryResult,DbError>{
+    fn execute(&mut self, query_str:String)->Result<QueryResult,DbError>{
+        let table_name=peek_table_name(&query_str)?;
+        let schema:Option<Vec<(String,DataTypes)>>=match self.tables.get_schema(table_name){
+            Ok(v)=>Some(v),
+            Err(DbError::TableAbsent)=>None,
+            Err(e)=>return Err(e),
+        };
+        let parse_schema: Option<&Vec<(String,DataTypes)>> = schema.as_ref();
+        let query:Query=parse(query_str,parse_schema)?;
         match query.task{
+            QueryOperation::Shutdown=>{
+                self.shutdown()?;
+                return Ok(QueryResult::Killed);
+            },
             QueryOperation::DeleteTable=>{
                 let table_name=query.table_name.ok_or(DbError::InsufficientParams)?;
                 self.tables.delete_table(table_name)?;
@@ -131,7 +145,7 @@ impl Database{
                 std::fs::remove_dir_all(&route).map_err(|_| DbError::FileError)?;
                 if is_self{
                     set_current_dir("..").map_err(|_| DbError::FileError)?;
-                    return Ok(QueryResult::Dropped);
+                    return Ok(QueryResult::Killed);
                 } else {
                     return Ok(QueryResult::Success);
                 }
@@ -152,7 +166,13 @@ impl Database{
             QueryOperation::Select=>{
                 let table_name=query.table_name.ok_or(DbError::InsufficientParams)?;
                 let conditions=query.conditions.ok_or(DbError::InsufficientParams)?;
-                let cols=query.columns.ok_or(DbError::InsufficientParams)?;
+                let cols=match query.columns{
+                    Some(t)=>t,
+                    None=>{
+                        let c:Vec<String>=Vec::new();
+                        c
+                    },
+                };
                 let rows=self.tables.select(&table_name,conditions,cols)?;
                 return Ok(QueryResult::Rows(rows));
             },
@@ -162,6 +182,11 @@ impl Database{
                 let c=self.tables.delete(&table_name,conditions)?;
                 return Ok(QueryResult::Count(c));
             },
+            QueryOperation::GetSchema=>{
+                let table_name = query.table_name.ok_or(DbError::InsufficientParams)?;
+                let schema = self.tables.get_schema(Some(table_name))?;
+                return Ok(QueryResult::Schema(schema));
+            }
         };
     }
 }
