@@ -481,3 +481,16 @@ operation.
 K I have refactored the recover function. Only tests remain with a deliberate panic!() in specific parts of insert
 and delete
 
+k insert passed one its tests. I totally forgot to sleep it's 11:13 pm. I put in panic after the wal write for table. the thread panicked, gave queue full error and the database logged thread panicked. Then I closed the terminal instead of calling shutdown, which is non crash. then i changed test to get all rows, et voila I saw the row I added the wal log for there.
+
+Ok insert passed its second test where I make it panic after index.write record and before self.records.push(record_id). However, the recover seems to make the shutdown operation think that the WAL is corrupted. I'll have to fix that bug.
+
+It says corrupted wal only in the run where it actually recovers. In the next one, when I close it after the recover,
+it does not give an error. AAHAHAHA the bug was in wal.reset(). In reset, I was not setting the file size to 10
+in self.file_size. I did however do this in the index wal. Yeah, that fixed it.
+
+Delete passes its WAL test, but I found a design flaw in the parser where it doesn't loop through conditions or
+updates properly and read field group doesn't make a new field for duplicate columns.
+
+NVM that's not a design flaw. There just isn't a method for or. so you can't do id==6 or id==7. Updates and conditions
+were wrong though because I forgot to iterate. IDK how they passed the tests earlier but the durability test is done.

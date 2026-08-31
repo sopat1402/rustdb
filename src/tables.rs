@@ -192,6 +192,7 @@ impl Tables{
         for id in &deletions{
             self.wal.add_log(TaskType::Delete,*id,&table_name,None)?;
         }
+
         table.delete(&mut self.index,deletions)?;
         table.lsn=self.wal.last_lsn;
         self.checkpoint(false)?;
@@ -213,7 +214,7 @@ impl Tables{
         if force || self.index.wal.file_size==10{
             let mut entry=self.wal.get_log_any(None)?;
             let mut modded:HashSet<String>=HashSet::new();
-            while let Some((log,data,iterator))=entry{
+            while let Some((log,_,iterator))=entry{
                 let table_name=log.table_name;
                 let table=match self.tables.get_mut(&table_name){
                     Some(t)=>t,

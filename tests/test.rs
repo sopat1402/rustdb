@@ -25,32 +25,16 @@ async fn test() -> std::io::Result<()> {
 
     let addr = "127.0.0.1:5432";
 
-    println!("--- Make table users ---");
-    let query = r#"{"task":"create_table","table_name":"users","schema":{"column":"id","type":"UINT32","column":"name","type":"VARCHAR","column":"age","type":"UINT32"}}"#;
-    send_query(addr, query).await?;
-
-    println!("--- Insert a row ---");
-    let query = r#"{"table_name":"users","task":"insert","row":{"id":"1","name":"Sohum Pathak","age":"20"}}"#;
+    println!("--- Insert ---");
+    let query=r#"{"table_name":"users","task":"insert","row":{"id":"8","name":"Balls","age":"20"}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Select before update ---");
-    let query = r#"{"table_name":"users","task":"select","columns":{},"conditions":{}}"#;
+    println!("--- Update ---");
+    let query=r#"{"table_name":"users","task":"update","updates":{"column":"name","value":"Ballus","column":"age","value":"22"},"conditions":{"column":"id","value":"8","column":"name","value":"Balls"}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Update age ---");
-    let query = r#"{"table_name":"users","task":"update","conditions":{"column":"id","operator":"e","value":"1"},"updates":{"column":"age","value":"21"}}"#;
-    send_query(addr,query).await?;
-
-    println!("\n--- Select after update ---");
-    let query = r#"{"table_name":"users","task":"select","columns":{},"conditions":{}}"#;
-    send_query(addr,query).await?;
-
-    println!("--- Make table users ---");
-    let query = r#"{"task":"create_table","table_name":"users","schema":{"column":"id","type":"UINT32","column":"name","type":"VARCHAR","column":"age","type":"UINT32"}}"#;
-    send_query(addr, query).await?;
-
-    println!("--- Delete all records ---");
-    let query=r#"{"task":"delete","table_name":"users","conditions":{}}"#;
+    println!("--- Get all rows ---");
+    let query = r#"{"table_name":"users","task":"select","conditions":{}"#;
     send_query(addr,query).await?;
 
     println!("\n--- Shutdown ---");

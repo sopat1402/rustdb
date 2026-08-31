@@ -157,6 +157,7 @@ impl TableWAL{
     pub fn reset(&mut self)->Result<(),DbError>{
         self.wal.set_len(10).map_err(|_| DbError::FileError)?;
         self.length=0;
+        self.file_size=10;
         let len_buf=self.length.to_le_bytes();
         self.wal.write_all_at(&len_buf,8).map_err(|_| DbError::FileError)?;
         self.wal.sync_data().map_err(|_| DbError::FileError)?;

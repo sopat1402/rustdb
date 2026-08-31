@@ -117,11 +117,14 @@ fn parse_operation(op:&str)->Result<Operator,DbError>{
     }
 }
 
-fn read_field_group(tokens:&[Token],i:&mut usize,expected_keys:&[&str],)->Result<HashMap<String,String>,DbError>{
+fn read_field_group(tokens:&[Token],i:&mut usize,expected_keys:&[&str])->Result<HashMap<String,String>,DbError>{
     let mut fields=HashMap::new();
-    while fields.len()<expected_keys.len() && *i<tokens.len(){
+    while *i<tokens.len(){
         match &tokens[*i]{
             Token::Key(k) if expected_keys.contains(&k.as_str()) => {
+                if fields.contains_key(k.as_str()){
+                    break; // duplicate key => new group starts here
+                }
                 let key=k.clone();
                 let value=next_value(tokens,i)?;
                 fields.insert(key,value);
@@ -266,18 +269,28 @@ pub fn parse(query:String,schema:Option<&Vec<(String,DataTypes)>>)->Result<Query
                     "conditions" => {
                         i+=1;
                         let schema = schema.ok_or(DbError::InsufficientParams)?;
-                        let fields=read_field_group(&tokens,&mut i,&["column","operator","value"])?;
-                        if fields.is_empty(){
-                            conditions=Some(Vec::new());
-                        }else{
-                            conditions=Some(vec![build_condition(fields,&schema)?]);
+                        let mut conds:Vec<Condition>=Vec::new();
+                        loop{
+                            let fields=read_field_group(&tokens,&mut i,&["column","operator","value"])?;
+                            if fields.is_empty(){
+                                break;
+                            }
+                            conds.push(build_condition(fields,&schema)?);
                         }
+                        conditions=Some(conds);
                     }
                     "updates" => {
                         i+=1;
                         let schema = schema.ok_or(DbError::InsufficientParams)?;
-                        let fields=read_field_group(&tokens,&mut i,&["column","value"])?;
-                        updates=Some(vec![build_condition(fields,&schema)?]);
+                        let mut upds:Vec<Condition>=Vec::new();
+                        loop{
+                            let fields=read_field_group(&tokens,&mut i,&["column","value"])?;
+                            if fields.is_empty(){
+                                break;
+                            }
+                            upds.push(build_condition(fields,&schema)?);
+                        }
+                        updates=Some(upds);
                     }
                     "columns" => {
                         let mut col_vals:Vec<String>=Vec::new();

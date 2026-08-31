@@ -41,6 +41,9 @@ The order does not have to be fixed in this format as long as the required param
 Each pair is to be specified like "column":"<name>","value":"<value>". All values are entered as strings. My JSON
 parser handles the type conversion.
 
+For conditions, you can select on multiple columns but cannot do OR operations on the same column. That means,
+you cannot pass the condition equivalent of id == 6 or id == 7.
+
 When making a table, along with the table name, a schema is to be provided :
 "schema":{"column":"name","type":"VARCHAR","column":"age","type":"u32"}
 
@@ -57,6 +60,10 @@ table name was passed above.
 for operations like select, conditions must be passed.
 
 "conditions":{"column":"age","operator":"ge","value":"25"} => translation : age >= 25
+
+Updates too must be passed for update, which also needs conditions.
+
+"updates":{"column":"age","value":"20"}
 
 In case you want all rows to be affected, do "conditions":{}
 
@@ -171,11 +178,14 @@ The WAL is deliberately simpler than a complete ARIES implementation. Full trans
 
 The table layer also maintains WAL state because the table's in-memory record-ID state is separate from the page-level state maintained by the index.
 
-The table WAL records changes to table membership, particularly insertion and deletion. The table and index WALs are synchronized through checkpointing.
+The table WAL records changes to table membership, particularly insertion and deletion. The table and index WALs are synchronized through checkpointing. In case of insert, it also stores the inserted row as bytes for redo.
 
-This introduces two sources of truth and therefore a small crash window between the corresponding WAL and data operations. The current implementation accepts this limitation rather than attempting to implement a more complicated unified recovery protocol.
+Previous versions left a gap in this as there were 2 sources of truth but it has been patched where the Table WAL
+checks the index for the record and based on that does undo, redo or just adding the record id to its records vector.
 
-If a crash occurs during this window, the most significant possible consequence is an inserted record not being present after recovery. The client is expected to verify the result of an operation if the connection is lost during a crash.
+This would normally need 2 Phase Commits if I was doing something advanced using transactions and MVCC but since this
+is a simpler database, I used undo and redo to sidestep a full implementation of 2 phase commits.
+
 
 ## Database Layer
 
@@ -296,9 +306,7 @@ This is intentionally simpler than implementing a fully disk-resident B+ tree. T
 
 ### Simplified WAL
 
-The WAL is not a complete ARIES implementation. There are two WAL states, one associated with table state and one with page/index state, which introduces a small crash window.
-
-The project explicitly treats this as a known limitation rather than hiding it behind a claim of perfect durability.
+The WAL is not a complete ARIES implementation. No two phase commits, but not really a need for it either.
 
 ## Design Philosophy
 
@@ -362,7 +370,6 @@ The most significant planned additions are:
 * Transactions
 * MVCC
 * More sophisticated concurrency
-* A more complete recovery system
 * Further optimization of scans
 * Potential improvements to variable-sized record management
 
@@ -370,13 +377,10 @@ Secondary indexes are likely to provide the largest immediate performance improv
 
 ## Known Trade-offs
 
-This project intentionally makes several trade-offs in favor of implementation simplicity.
+This project intentionally makes several trade-offs in favor of implementation simplicity. It is recommended to read
+Compromises.md for a full understanding of this.
 
-The most important is that **correctness of the architecture is prioritized over production-grade completeness**.
-
-The database does not claim to provide the durability guarantees of a mature database system. In particular, the small interval between the table WAL synchronization and the page/index operation synchronization is a known limitation.
-
-Likewise, keeping the entire B+ tree in memory makes the implementation considerably simpler but places a practical limit on how large a database can comfortably become.
+For instance, keeping the entire B+ tree in memory makes the implementation considerably simpler but places a practical limit on how large a database can comfortably become.
 
 These limitations are documented intentionally. The project is meant to make the underlying database mechanisms visible rather than hide them behind a production-oriented abstraction.
 
@@ -415,4 +419,4 @@ MIT License. (See LICENSE)
 
 This is a learning/implementation project and is **not intended to be used as a production database**.
 
-The documented limitations are intentional, particularly around concurrency, transaction semantics, indexing, query planning, and crash durability.
+The documented limitations are intentional, particularly around concurrency, transaction semantics, indexing and query planning.
