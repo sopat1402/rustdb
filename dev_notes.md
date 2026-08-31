@@ -471,3 +471,13 @@ stuff.
 Ooof realised that all those error structs I made were useless since I was making a DbError enum. Deleted them and will
 made display for the DbError struct and edited parser to use display instead of debug.
 
+Checkpoint for tables does not need to call self.insert because checkpoint is called after successful operations
+and on graceful shutdowns. So, the index would have its own wal and it is checkpointed too during shutdown and
+table checkpoint is synced with index checkpoint. The undo and redo is needed in recover.
+
+In recover, I need to check the index if table.lsn<log.lsn because table lsn is only updated after a successful 
+operation.
+
+K I have refactored the recover function. Only tests remain with a deliberate panic!() in specific parts of insert
+and delete
+

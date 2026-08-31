@@ -278,14 +278,45 @@ impl Tables{
                 }else{
                     match log.task_type{
                         TaskType::Insert=>{
-                            table.records.push(log.record_id);
+                            //check the index
+                            let _=match self.index.get_record(log.record_id){
+                                Ok(_)=>{
+                                    //index got the write, and wrote its own wal prior to crash
+                                    if !table.records.contains(&log.record_id){
+                                        table.records.push(log.record_id);
+                                    }
+                                },
+                                Err(DbError::RecordAbsent)=>{
+                                    //absent in index, delete record id from self, redo
+                                    if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
+                                        table.records.remove(pos);
+                                    }
+                                    let row_buf=data.ok_or(DbError::CorruptedWAL)?;
+                                    let _=table.insert(&mut self.index,row_buf)?;
+                                },
+                                Err(e)=>return Err(e),
+                            };
                             table.lsn=log.lsn;
                             modded.insert(table_name);
                         },
                         TaskType::Delete=>{
-                             if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
-                                table.records.remove(pos);
-                            }
+                            //check index
+                            let _=match self.index.get_record(log.record_id){
+                                Ok(_)=>{
+                                    //index didn't delete => did not write its wal
+                                    self.index.delete_record(log.record_id)?;
+                                    if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
+                                        table.records.remove(pos);
+                                    }
+                                },
+                                Err(DbError::RecordAbsent)=>{
+                                    //index has done the operation => wrote its wal
+                                    if let Some(pos) = table.records.iter().position(|r_id| *r_id == log.record_id) {
+                                        table.records.remove(pos);
+                                    }
+                                },
+                                Err(e)=>return Err(e),
+                            };
                             table.lsn=log.lsn;
                             modded.insert(table_name);
                         },
