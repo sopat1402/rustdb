@@ -45,8 +45,16 @@ async fn test() -> std::io::Result<()> {
     let query = r#"{"table_name":"users","task":"select","columns":{},"conditions":{}}"#;
     send_query(addr,query).await?;
 
-    println!("\n--- Drop database ---");
-    let query = r#"{"task":"drop_db","db_name":"testdb"}"#;
+    println!("--- Make table users ---");
+    let query = r#"{"task":"create_table","table_name":"users","schema":{"column":"id","type":"UINT32","column":"name","type":"VARCHAR","column":"age","type":"UINT32"}}"#;
+    send_query(addr, query).await?;
+
+    println!("--- Delete all records ---");
+    let query=r#"{"task":"delete","table_name":"users","conditions":{}}"#;
+    send_query(addr,query).await?;
+
+    println!("\n--- Shutdown ---");
+    let query = r#"{"task":"shutdown"}"#;
     send_query(addr,query).await?;
 
     Ok(())

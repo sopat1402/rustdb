@@ -447,8 +447,27 @@ the magic.
     file, I was checking if col_name_size+offset+2>=file_size despite doing offset+2 before that. So if there are no
     records, it does reach the end of the file. The test does work now.
 
+# WAL Hole fix
 
+I'll be refactoring the WAL format for the table WAL to also store the bytes row. Hence also insert to take byte row
+instead of vector row. here's my reasoning:
 
+then that table would need to know how to check if an operation succeeded. So maybe first the data is also written inside the table wal for insert. when reading the wal to recover, for insert it checks if a record absent is obtained, in which case it has the row as bytes in there anyways so it then inserts into the Index. Since it is for recovery, I should first then delete that record id and retry the whole thing with that data. Doesn't that fix the whole issue? then there's undo and recover. holy shit I solved it. Didn't even need 2 phase commits. So the page WAL is to undo corruption and the whole redo logic stuff is there anyways. since index recover is called prior to the tables recover, there wouldn't be a worry of double writes.
 
+however, I can't do the same in delete due to multiple deletions hence an array of returned IDs, but then, delete first deletes from the page and then from the table. So the table wal is written after the deletions array is written but for each record id after the scan in the table function, the record is deleted from the tables array only after index.delete. So, crashes can happen in 2 places : one - table delete succeeds but table wal not written and index wal is. two - index delete done, table delete not done. in (2) there will be a record absent on recover checks. but for (1), the table wal not being written would mean that the changes are then not recoverable as the table would not have been serialised and the wal would not have been written. I should instead call scan outside of delete and pass the rows to table.delete. that way I can write the wal before and just pass the needed record IDs.
 
+- K I fixed that. It is scanning outside in tables.delete, getting deletions as Vec<u32> from the rows, writing the WAL
+and then passing deletions to table.delete instead of conditions.
+
+Now a wal format change is needed in table_wal.rs to have Some(data) and a log size. That way get_log_any will change
+to consider a payload too and the APIs will change. After that I'd have to change the recover function as well as
+(perhaps) checkpoint. The real mammoth task here is checkpointing but thankfully I already have a lovely API to
+interact with my database. Just json. No struct management. Or enum gymnastics.
+
+K I have edited table_wal and changed update and insert. I added too big record as an error to dberrors and am checking
+that in insert when I make row buf. I want to send the actual display text from db errors instead of just the debug
+stuff.
+
+Ooof realised that all those error structs I made were useless since I was making a DbError enum. Deleted them and will
+made display for the DbError struct and edited parser to use display instead of debug.
 

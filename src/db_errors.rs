@@ -2,254 +2,6 @@
 //sohum.pathak@protonmail.com
 use std::fmt;
 
-//Data is corrupted at the byte level
-#[derive(Debug)]
-pub struct CorruptedDataError;
-impl fmt::Display for CorruptedDataError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Corrupted data")
-    }
-}
-impl std::error::Error for CorruptedDataError {}
-
-#[derive(Debug)]
-pub struct TableAbsent;
-impl fmt::Display for TableAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "No such table")
-    }
-}
-impl std::error::Error for TableAbsent {}
-
-#[derive(Debug)]
-pub struct TableNameExists;
-impl fmt::Display for TableNameExists {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Table name exists")
-    }
-}
-impl std::error::Error for TableNameExists {}
-
-//LRU is corrupted
-#[derive(Debug)]
-pub struct CorruptedLRU;
-impl fmt::Display for CorruptedLRU {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Corrupted LRU")
-    }
-}
-impl std::error::Error for CorruptedLRU {}
-
-
-//wal corrupted
-#[derive(Debug)]
-pub struct CorruptedWAL;
-impl fmt::Display for CorruptedWAL {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Corrupted WAL")
-    }
-}
-impl std::error::Error for CorruptedWAL {}
-
-//stored checksum doesn't match the calculated one
-#[derive(Debug)]
-pub struct ChecksumMismatch;
-impl fmt::Display for ChecksumMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Checksum mismatch")
-    }
-}
-impl std::error::Error for ChecksumMismatch {}
-
-//Record found with the same key
-#[derive(Debug)]
-pub struct DuplicateKey;
-impl fmt::Display for DuplicateKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Duplicate key")
-    }
-}
-impl std::error::Error for DuplicateKey {}
-
-//Page type out of known values
-#[derive(Debug)]
-pub struct PageTypeMismatch;
-impl fmt::Display for PageTypeMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Unknown page type")
-    }
-}
-impl std::error::Error for PageTypeMismatch {}
-
-//Page flags out of known values
-#[derive(Debug)]
-pub struct PageFlagMismatch;
-impl fmt::Display for PageFlagMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Unknown page flag")
-    }
-}
-impl std::error::Error for PageFlagMismatch {}
-
-//Page id not found
-#[derive(Debug)]
-pub struct PageAbsent;
-impl fmt::Display for PageAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Given page ID absent")
-    }
-}
-impl std::error::Error for PageAbsent {}
-
-//Page has corrupted flag
-#[derive(Debug)]
-pub struct PageCorrupted;
-impl fmt::Display for PageCorrupted {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Corrupted page")
-    }
-}
-impl std::error::Error for PageCorrupted {}
-
-//Page doesn't have the record id
-#[derive(Debug)]
-pub struct RecordAbsent;
-impl fmt::Display for RecordAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Record doesn't exist.")
-    }
-}
-impl std::error::Error for RecordAbsent {}
-
-//Page doesn't have space to add a record
-#[derive(Debug)]
-pub struct SpaceOver;
-impl fmt::Display for SpaceOver {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Page is out of space.")
-    }
-}
-impl std::error::Error for SpaceOver {}
-
-//error during file IO
-#[derive(Debug)]
-pub struct FileError;
-impl fmt::Display for FileError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Error while writing file.")
-    }
-}
-impl std::error::Error for FileError {}
-
-//page magic is wrong
-#[derive(Debug)]
-pub struct MagicMismatch;
-impl fmt::Display for MagicMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Page magic doesn't match DB magic.")
-    }
-}
-impl std::error::Error for MagicMismatch {}
-
-//Record id doesn't match the slot id or an offset issue
-#[derive(Debug)]
-pub struct RecordMismatch;
-impl fmt::Display for RecordMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Record data corrupted.")
-    }
-}
-impl std::error::Error for RecordMismatch {}
-
-#[derive(Debug)]
-pub struct InsufficientParams;
-impl fmt::Display for InsufficientParams {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Not enough args to function.")
-    }
-}
-impl std::error::Error for InsufficientParams {}
-
-#[derive(Debug)]
-pub struct ColumnAbsent;
-impl fmt::Display for ColumnAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "No such column.")
-    }
-}
-impl std::error::Error for ColumnAbsent {}
-
-#[derive(Debug)]
-pub struct InvalidComparison;
-impl fmt::Display for InvalidComparison {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Can't compare these two values.")
-    }
-}
-impl std::error::Error for InvalidComparison {}
-
-#[derive(Debug)]
-pub struct TypeMismatch;
-impl fmt::Display for TypeMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "No such type.")
-    }
-}
-impl std::error::Error for TypeMismatch {}
-
-#[derive(Debug)]
-pub struct MalformedRequest;
-impl fmt::Display for MalformedRequest {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Bad request.")
-    }
-}
-impl std::error::Error for MalformedRequest {}
-
-#[derive(Debug)]
-pub struct InvalidOperation;
-impl fmt::Display for InvalidOperation {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "No such operation")
-    }
-}
-impl std::error::Error for InvalidOperation {}
-
-#[derive(Debug)]
-pub struct InvalidColumn;
-impl fmt::Display for InvalidColumn {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "No such column")
-    }
-}
-impl std::error::Error for InvalidColumn {}
-
-#[derive(Debug)]
-pub struct DBExists;
-impl fmt::Display for DBExists {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Database exists")
-    }
-}
-impl std::error::Error for DBExists {}
-
-#[derive(Debug)]
-pub struct DBAbsent;
-impl fmt::Display for DBAbsent {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Database doesn't exist")
-    }
-}
-impl std::error::Error for DBAbsent {}
-
-#[derive(Debug)]
-pub struct QueueClosed;
-impl fmt::Display for QueueClosed {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Queue is full")
-    }
-}
-impl std::error::Error for QueueClosed {}
 
 #[derive(Debug)]
 pub enum DbError{
@@ -279,4 +31,41 @@ pub enum DbError{
     DBExists,
     DBAbsent,
     QueueClosed,
+    TooBigRecord,
+}
+
+impl fmt::Display for DbError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            DbError::RecordMismatch => "Record data corrupted.",
+            DbError::SpaceOver => "Page is out of space.",
+            DbError::RecordAbsent => "Record doesn't exist.",
+            DbError::PageAbsent => "Given page ID absent.",
+            DbError::CorruptedDataError => "Corrupted data.",
+            DbError::DuplicateKey => "Duplicate key.",
+            DbError::FileError => "Error while writing file.",
+            DbError::PageTypeMismatch => "Unknown page type.",
+            DbError::PageFlagMismatch => "Unknown page flag.",
+            DbError::PageCorrupted => "Corrupted page.",
+            DbError::MagicMismatch => "Page magic doesn't match DB magic.",
+            DbError::ChecksumMismatch => "Checksum mismatch.",
+            DbError::CorruptedWAL => "Corrupted WAL.",
+            DbError::InsufficientParams => "Not enough args to function.",
+            DbError::CorruptedLRU => "Corrupted LRU.",
+            DbError::TableNameExists => "Table name exists.",
+            DbError::ColumnAbsent => "No such column.",
+            DbError::InvalidComparison => "Can't compare these two values.",
+            DbError::TypeMismatch => "No such type.",
+            DbError::TableAbsent => "No such table.",
+            DbError::MalformedRequest => "Bad request.",
+            DbError::InvalidOperation => "No such operation.",
+            DbError::InvalidColumn => "No such column.",
+            DbError::DBExists => "Database exists.",
+            DbError::DBAbsent => "Database doesn't exist.",
+            DbError::QueueClosed => "Queue is full.",
+            DbError::TooBigRecord => "The record is too big.",
+        };
+
+        write!(f, "{message}")
+    }
 }

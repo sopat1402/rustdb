@@ -10,6 +10,7 @@ pub struct TableWAL{
     pub file_size       :   u64,
 }
 
+
 #[repr(u16)]
 pub enum TaskType{
     Insert,
@@ -22,10 +23,13 @@ pub struct Log{
     pub task_type   :   TaskType,
     pub record_id   :   u32,
     pub table_name  :   String,
+    data_size       :   u16,
 }
 
+//data size comes before table name
+
 impl Log{
-    fn serialise(&self)->Result<Vec<u8>,DbError>{
+    fn serialise(&self,row:Option<&[u8]>)->Result<Vec<u8>,DbError>{
         let mut buf:Vec<u8>=vec![0u8;self.log_size as usize];
         let log_size_bytes=self.log_size.to_le_bytes();
         let lsn_bytes=self.lsn.to_le_bytes();
@@ -40,15 +44,23 @@ impl Log{
         let record_id_bytes=self.record_id.to_le_bytes();
         buf[12..16].copy_from_slice(&record_id_bytes);
         let tname_bytes=self.table_name.as_bytes();
-        buf[16..self.log_size as usize].copy_from_slice(&tname_bytes);
+        let dsize_bytes=self.data_size.to_le_bytes();
+        let mut offset:usize=16;
+        buf[offset..offset+2].copy_from_slice(&dsize_bytes);
+        offset+=2;
+        buf[offset..offset+self.table_name.len()].copy_from_slice(&tname_bytes);
+        offset+=self.table_name.len();
+        if let Some(row_buf)=row{
+            buf[offset..self.log_size as usize].copy_from_slice(&row_buf);
+        }
         Ok(buf)
     }
 
-    fn deserialise(wal : &File,offset:u64)->Result<Self,DbError>{
+    fn deserialise(wal : &File,offset:u64)->Result<(Self,Option<Vec<u8>>),DbError>{
         let mut buf_size=[0u8;2];
         wal.read_at(&mut buf_size,offset).map_err(|_| DbError::FileError)?;
         let size:u16=u16::from_le_bytes(buf_size[0..2].try_into().map_err(|_| DbError::CorruptedWAL)?);
-        if size<16{
+        if size<18{
             return Err(DbError::CorruptedWAL);
         }
         let mut log_buffer:Vec<u8>=vec![0u8;size as usize];
@@ -63,18 +75,33 @@ impl Log{
             _=>return Err(DbError::CorruptedWAL),
         };
         let record_id=u32::from_le_bytes(log_buffer[12..16].try_into().map_err(|_| DbError::CorruptedWAL)?);
-        let mut data:Vec<u8>=vec![0u8;size as usize-16];
-        data.copy_from_slice(&log_buffer[16..size as usize]);
-        let table_name=String::from_utf8(data).map_err(|_| DbError::CorruptedWAL)?;
-        Ok(
+        let mut offset:usize=16;
+        let data_size=u16::from_le_bytes(log_buffer[offset..offset+2].try_into().map_err(|_| DbError::CorruptedDataError)?);
+        offset+=2;
+        if data_size>size-18{
+            return Err(DbError::CorruptedWAL);
+        } 
+        let mut tname_buf:Vec<u8>=vec![0u8;size as usize-18-data_size as usize];
+        let len=tname_buf.len();
+        tname_buf.copy_from_slice(&log_buffer[offset..offset+len]);
+        let table_name=String::from_utf8(tname_buf).map_err(|_| DbError::CorruptedWAL)?;
+        offset+=table_name.len();
+        let mut data:Option<Vec<u8>>=None;
+        if data_size!=0{
+            let mut row:Vec<u8>=vec![0u8;data_size as usize];
+            row.copy_from_slice(&log_buffer[offset..offset+data_size as usize]);
+            data=Some(row);
+        }
+        Ok((
             Self{
                 log_size:size,
                 lsn,
                 task_type,
                 record_id,
                 table_name,
-            }
-        )
+                data_size,
+            },data
+        ))
     }
 }
 
@@ -136,35 +163,41 @@ impl TableWAL{
         Ok(())
     }
 
-    pub fn add_log(&mut self,task_type:TaskType,record_id:u32,table_name:&String)->Result<(),DbError>{
+    pub fn add_log(&mut self,task_type:TaskType,record_id:u32,table_name:&String,row:Option<&[u8]>)->Result<(),DbError>{
         let table_name=table_name.clone();
+        let data_size=match row{
+            Some(t)=>t.len() as u16,
+            None=>0,
+        };
         let entry:Log=match task_type{
             TaskType::Delete=>{
                 let lsn=self.last_lsn+1;
-                let log_size=16+table_name.len() as u16;
+                let log_size=18+table_name.len() as u16+data_size;
                 let entry=Log{
                     log_size,
                     lsn,
                     task_type,
                     record_id,
                     table_name,
+                    data_size,
                 };
                 entry
             },
             TaskType::Insert=>{
                 let lsn:u64=self.last_lsn+1;
-                let log_size:u16=16+table_name.len() as u16;
+                let log_size:u16=18+table_name.len() as u16+data_size;
                 let entry=Log{
                     log_size,
                     lsn,
                     task_type,
                     record_id,
                     table_name,
+                    data_size,
                 };
                 entry
             },
         };
-        let buf:Vec<u8>=entry.serialise()?;
+        let buf:Vec<u8>=entry.serialise(row)?;
         self.wal.write_all_at(&buf,self.file_size).map_err(|_| DbError::FileError)?;
         self.length+=1;
         self.last_lsn+=1;
@@ -177,7 +210,7 @@ impl TableWAL{
         Ok(())
     }
 
-    pub fn get_log_any(&self,iterator:Option<u64>)->Result<Option<(Log,u64)>,DbError>{
+    pub fn get_log_any(&self,iterator:Option<u64>)->Result<Option<(Log,Option<Vec<u8>>,u64)>,DbError>{
         let offset:u64=match iterator{
             Some(v)=>{
                 if v<10 {
@@ -192,9 +225,9 @@ impl TableWAL{
         if offset>=self.file_size {
             return Ok(None);
         }
-        let log=Log::deserialise(&self.wal,offset)?;
+        let (log,data)=Log::deserialise(&self.wal,offset)?;
         let new_offset=offset+log.log_size as u64;
-        Ok(Some((log,new_offset)))
+        Ok(Some((log,data,new_offset)))
     }
 
 }

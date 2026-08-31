@@ -93,6 +93,9 @@ impl Tables{
 
     pub fn create_table(&mut self,name:String,schema:Vec<(String,DataTypes)>)->Result<(),DbError>{
         let n=name.clone();
+        if self.tables.contains_key(&name){
+            return Err(DbError::TableNameExists);
+        }
         let table=Table::new(&name,schema,self.wal.last_lsn)?;
         self.tables.insert(name,table);
         let mut size=self.file.metadata().map_err(|_| DbError::FileError)?.len();
@@ -144,8 +147,13 @@ impl Tables{
             Some(t)=>t,
             None=>return Err(DbError::TableAbsent),
         };
-        let id=table.insert(&mut self.index,row)?;
-        self.wal.add_log(TaskType::Insert,id,table_name)?;
+        table.check_columns(&row)?;
+        let row_buf=Table::row_to_bytes(row);
+        if row_buf.len()>8088{
+            return Err(DbError::TooBigRecord);
+        }
+        self.wal.add_log(TaskType::Insert,self.index.next_record_id,table_name,Some(&row_buf))?;
+        let _=table.insert(&mut self.index,row_buf)?;
         table.lsn=self.wal.last_lsn;
         self.checkpoint(false)?;
         Ok(())
@@ -175,13 +183,19 @@ impl Tables{
             Some(t)=>t,
             None=>return Err(DbError::TableAbsent),
         };
-        let deleted=table.delete(&mut self.index,conditions)?;
-        for id in &deleted{
-            self.wal.add_log(TaskType::Delete,*id,table_name)?;
+        let deleted_rows=table.scan(&mut self.index,conditions)?;
+        let mut deletions:Vec<u32>=Vec::new();
+        for (_,id) in deleted_rows{
+            deletions.push(id);
         }
+        let deleted=deletions.len();
+        for id in &deletions{
+            self.wal.add_log(TaskType::Delete,*id,&table_name,None)?;
+        }
+        table.delete(&mut self.index,deletions)?;
         table.lsn=self.wal.last_lsn;
         self.checkpoint(false)?;
-        Ok(deleted.len())
+        Ok(deleted)
     }
 
     pub fn shutdown(&mut self)->Result<(),DbError>{
@@ -199,7 +213,7 @@ impl Tables{
         if force || self.index.wal.file_size==10{
             let mut entry=self.wal.get_log_any(None)?;
             let mut modded:HashSet<String>=HashSet::new();
-            while let Some((log,iterator))=entry{
+            while let Some((log,data,iterator))=entry{
                 let table_name=log.table_name;
                 let table=match self.tables.get_mut(&table_name){
                     Some(t)=>t,
@@ -249,7 +263,7 @@ impl Tables{
         else{
             let mut entry=self.wal.get_log_any(None)?;
             let mut modded:HashSet<String>=HashSet::new();
-            while let Some((log,iterator))=entry{
+            while let Some((log,data,iterator))=entry{
                 let table_name=log.table_name;
                 let table=match self.tables.get_mut(&table_name){
                     Some(t)=>t,
@@ -633,17 +647,14 @@ impl Table{
         Ok(result)
     }
 
-    fn delete(&mut self,index:&mut Index,conditions:Vec<Condition>)->Result<Vec<u32>,DbError>{
-        let rows=self.scan(index,conditions)?;
-        let mut deletions:Vec<u32>=Vec::new();
-        for (_,id) in rows{
+    fn delete(&mut self,index:&mut Index,deletions:Vec<u32>)->Result<(),DbError>{
+        for id in deletions{
             index.delete_record(id)?;
-            deletions.push(id);
             if let Some(pos) = self.records.iter().position(|r_id| *r_id == id) {
                 self.records.remove(pos);
             }
         }
-        Ok(deletions)
+        Ok(())
     }
 
     fn update(&mut self,index:&mut Index,conditions:Vec<Condition>,updates:Vec<Condition>)->Result<usize,DbError>{
@@ -688,11 +699,12 @@ impl Table{
         }
         Ok(updated)
     }
-    fn insert(&mut self, index:&mut Index,row : Vec<(String,Value)>)->Result<u32,DbError>{
+
+    fn check_columns(&mut self,row:&Vec<(String,Value)>)->Result<(),DbError>{
         let schema: HashMap<&String, DataTypes> =self.schema.iter().map(|(name, ty)| (name, *ty)).collect();
         let len=self.schema.len() as usize;
         let mut count:usize=0;
-        for col in &row{
+        for col in row{
             let (name,value)=col;
             if schema.contains_key(&name){
                 let types;
@@ -733,11 +745,14 @@ impl Table{
         if count!=len{
             return Err(DbError::InsufficientParams);
         }
-        let w_buf=Self::row_to_bytes(row);
+        Ok(())
+    }
+
+    fn insert(&mut self, index:&mut Index,row_buf : Vec<u8>)->Result<u32,DbError>{
         let si_bytes=self.next_si_no.to_le_bytes();
         let mut buf:Vec<u8>=Vec::new();
         buf.extend(si_bytes);
-        buf.extend(w_buf);
+        buf.extend(row_buf);
         let _=match index.write_record(&buf,buf.len()){
             Ok(v)=>{
                 self.records.push(v);

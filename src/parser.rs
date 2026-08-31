@@ -159,7 +159,7 @@ fn encode_value(value: &Value) -> String {
 pub fn encode_error(err: &DbError) -> String {
     format!(
         "{{\"success\":false,\"error\":\"{}\"}}",
-        escape_json_string(&format!("{err:?}"))
+        escape_json_string(&format!("{err}"))
     )
 }
 
